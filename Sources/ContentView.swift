@@ -4,15 +4,14 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var store: TodoStore
-    @EnvironmentObject private var focus: FocusCoordinator
+    @EnvironmentObject private var window: WindowState
 
     /// Stored rather than plain @State so the app reopens on whichever tab you
     /// were last using — otherwise long-term tasks look missing after a restart.
     @AppStorage("selectedHorizon") private var horizonRaw = Horizon.shortTerm.rawValue
-    @State private var filter: Filter = .all
-    @State private var editingID: UUID?
-
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.undoManager) private var undoManager
+    @Environment(\.openWindow) private var openWindow
 
     private var horizon: Horizon {
         get { Horizon(rawValue: horizonRaw) ?? .shortTerm }
@@ -20,14 +19,26 @@ struct ContentView: View {
     }
 
     private var accent: Color { Paper.accent(for: horizon) }
+    private var filter: Filter { window.filter }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Hairline()
 
-            ScrollView {
-                TaskList(horizon: horizon, filter: filter, editingID: $editingID)
+            if let problem = store.problem {
+                ProblemBanner(text: problem, dismiss: store.dismissProblem)
+                Hairline()
+            }
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    TaskList(horizon: horizon, filter: filter)
+                }
+                // Keep the arrow-key selection on screen.
+                .onChange(of: window.selectedID) { id in
+                    if let id = id { proxy.scrollTo(id) }
+                }
             }
 
             Hairline()
@@ -35,9 +46,15 @@ struct ContentView: View {
         }
         .background(Paper.sheet.ignoresSafeArea())
         .frame(minWidth: 420, minHeight: 460)
+        .onAppear {
+            store.undoManager = undoManager
+            let open = openWindow
+            window.reopenWindow = { open(id: TodoListApp.windowID) }
+        }
+        .onChange(of: undoManager) { store.undoManager = $0 }
         // A shortcut aimed at the other view switches to it first; the field
         // itself claims focus once it appears.
-        .onChange(of: focus.target) { target in
+        .onChange(of: window.target) { target in
             switch target {
             case .bucket:   horizon = .shortTerm
             case .longTerm: horizon = .longTerm
@@ -115,7 +132,7 @@ struct ContentView: View {
                         .padding(.horizontal, 7)
                 }
                 Button {
-                    withAnimation(motion(.easeInOut(duration: 0.15))) { filter = candidate }
+                    withAnimation(motion(.easeInOut(duration: 0.15))) { window.filter = candidate }
                 } label: {
                     Text(candidate.rawValue.lowercased())
                         .font(Face.code(9.5, weight: candidate == filter ? .bold : .medium))
@@ -206,7 +223,6 @@ struct ContentView: View {
 struct TaskList: View {
     let horizon: Horizon
     let filter: Filter
-    @Binding var editingID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -214,11 +230,10 @@ struct TaskList: View {
                 ForEach(Array(Bucket.allCases.enumerated()), id: \.element) { index, bucket in
                     BucketSection(bucket: bucket,
                                   shortcutNumber: index + 1,
-                                  filter: filter,
-                                  editingID: $editingID)
+                                  filter: filter)
                 }
             } else {
-                LongTermList(filter: filter, editingID: $editingID)
+                LongTermList(filter: filter)
             }
         }
         .padding(.horizontal, 18)
@@ -279,6 +294,8 @@ struct AddLine: View {
                 .foregroundStyle(Paper.ink)
                 .focused(isFocused)
                 .onSubmit(onSubmit)
+                // Esc hands the keyboard back to the task list.
+                .onExitCommand { isFocused.wrappedValue = false }
 
             if !isFocused.wrappedValue && draft.isEmpty {
                 Text(hint)
@@ -295,6 +312,37 @@ struct AddLine: View {
                 .frame(height: isFocused.wrappedValue ? 1.5 : 1)
         }
         .animation(.easeOut(duration: 0.15), value: isFocused.wrappedValue)
+    }
+}
+
+/// Tells the person something went wrong with the task file. Stays until
+/// dismissed, or until a save succeeds again.
+struct ProblemBanner: View {
+    let text: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Paper.mark)
+            Text(text)
+                .font(Face.task())
+                .foregroundStyle(Paper.ink)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Paper.muted)
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(Paper.mark.opacity(0.12))
     }
 }
 
@@ -316,10 +364,9 @@ struct BucketSection: View {
     let bucket: Bucket
     let shortcutNumber: Int
     let filter: Filter
-    @Binding var editingID: UUID?
 
     @EnvironmentObject private var store: TodoStore
-    @EnvironmentObject private var focus: FocusCoordinator
+    @EnvironmentObject private var window: WindowState
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
@@ -335,7 +382,7 @@ struct BucketSection: View {
                            : "nothing \(filter.rawValue.lowercased()) here")
             } else {
                 VStack(spacing: 0) {
-                    ForEach(items) { TaskRow(todo: $0, editingID: $editingID) }
+                    ForEach(items) { TaskRow(todo: $0) }
                 }
             }
 
@@ -349,7 +396,9 @@ struct BucketSection: View {
         // Claimed on appear too, since switching horizon rebuilds this view
         // after the shortcut has already been set.
         .onAppear(perform: claimFocusIfWanted)
-        .onChange(of: focus.target) { _ in claimFocusIfWanted() }
+        .onChange(of: window.target) { _ in claimFocusIfWanted() }
+        // Typing a new task and walking the list are separate modes.
+        .onChange(of: fieldFocused) { if $0 { window.selectedID = nil } }
     }
 
     private func add() {
@@ -360,9 +409,9 @@ struct BucketSection: View {
     }
 
     private func claimFocusIfWanted() {
-        guard focus.target == .bucket(bucket) else { return }
+        guard window.target == .bucket(bucket) else { return }
         fieldFocused = true
-        DispatchQueue.main.async { focus.target = nil }
+        DispatchQueue.main.async { window.target = nil }
     }
 }
 
@@ -370,10 +419,9 @@ struct BucketSection: View {
 
 struct LongTermList: View {
     let filter: Filter
-    @Binding var editingID: UUID?
 
     @EnvironmentObject private var store: TodoStore
-    @EnvironmentObject private var focus: FocusCoordinator
+    @EnvironmentObject private var window: WindowState
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
@@ -387,7 +435,7 @@ struct LongTermList: View {
                            : "nothing \(filter.rawValue.lowercased()) here")
             } else {
                 VStack(spacing: 0) {
-                    ForEach(items) { TaskRow(todo: $0, editingID: $editingID) }
+                    ForEach(items) { TaskRow(todo: $0) }
                 }
             }
 
@@ -399,7 +447,9 @@ struct LongTermList: View {
                     onSubmit: add)
         }
         .onAppear(perform: claimFocusIfWanted)
-        .onChange(of: focus.target) { _ in claimFocusIfWanted() }
+        .onChange(of: window.target) { _ in claimFocusIfWanted() }
+        // Typing a new task and walking the list are separate modes.
+        .onChange(of: fieldFocused) { if $0 { window.selectedID = nil } }
     }
 
     private func add() {
@@ -410,9 +460,9 @@ struct LongTermList: View {
     }
 
     private func claimFocusIfWanted() {
-        guard focus.target == .longTerm else { return }
+        guard window.target == .longTerm else { return }
         fieldFocused = true
-        DispatchQueue.main.async { focus.target = nil }
+        DispatchQueue.main.async { window.target = nil }
     }
 }
 
@@ -420,15 +470,20 @@ struct LongTermList: View {
 
 struct TaskRow: View {
     let todo: Todo
-    @Binding var editingID: UUID?
 
     @EnvironmentObject private var store: TodoStore
+    @EnvironmentObject private var window: WindowState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draft = ""
     @State private var isHovering = false
+    /// True from the moment a rename starts until it is saved or cancelled —
+    /// even if another row takes over `editingID` first, so the text typed here
+    /// is saved rather than dropped.
+    @State private var hasOpenEdit = false
     @FocusState private var editFocused: Bool
 
-    private var isEditing: Bool { editingID == todo.id }
+    private var isEditing: Bool { window.editingID == todo.id }
+    private var isSelected: Bool { window.selectedID == todo.id }
     private var accent: Color { Paper.accent(for: todo.horizon) }
 
     var body: some View {
@@ -444,10 +499,10 @@ struct TaskRow: View {
                         .foregroundStyle(Paper.ink)
                         .focused($editFocused)
                         .onSubmit(commitEdit)
-                        .onExitCommand { editingID = nil }      // Esc cancels
+                        .onExitCommand(perform: cancelEdit)
                         .onChange(of: editFocused) { focused in
                             // Clicking away saves rather than dropping the edit.
-                            if !focused && isEditing { commitEdit() }
+                            if !focused { commitEdit() }
                         }
                 } else {
                     Text(todo.title)
@@ -475,8 +530,20 @@ struct TaskRow: View {
                 .frame(width: todo.isStarred ? 3 : 1)
                 .offset(x: 24)
         }
-        .background(isHovering ? Paper.hover : Color.clear)
+        .background(isSelected ? accent.opacity(0.12) : isHovering ? Paper.hover : Color.clear)
         .onHover { isHovering = $0 }
+        // A single click selects the row for the arrow keys; it does not wait
+        // on the double-click that starts a rename.
+        .simultaneousGesture(TapGesture().onEnded(select))
+        .onAppear { if isEditing { openEdit() } }
+        .onChange(of: window.editingID) { id in
+            if id == todo.id {
+                openEdit()
+            } else if hasOpenEdit {
+                // Another row started editing before this one lost focus.
+                commitEdit()
+            }
+        }
         .contextMenu {
             Button(todo.isDone ? "Mark as not done" : "Mark as done") { store.toggle(todo) }
             Button(todo.isStarred ? "Remove star" : "Star") { store.toggleStar(todo) }
@@ -542,16 +609,37 @@ struct TaskRow: View {
         .help("Delete task")
     }
 
+    private func select() {
+        guard !isEditing else { return }
+        window.selectedID = todo.id
+        // Take the cursor out of any add field so the arrow keys reach the list.
+        NSApp.keyWindow?.makeFirstResponder(nil)
+    }
+
+    /// Asks for a rename. The row opens its field when `editingID` arrives, so
+    /// the keyboard (return on a selected task) goes through the same path.
     private func beginEdit() {
+        window.editingID = todo.id
+    }
+
+    private func openEdit() {
+        guard !hasOpenEdit else { return }
+        hasOpenEdit = true
         draft = todo.title
-        editingID = todo.id
         // Focus has to wait until the field actually exists in the view tree.
         DispatchQueue.main.async { editFocused = true }
     }
 
     private func commitEdit() {
+        guard hasOpenEdit else { return }
+        hasOpenEdit = false
         store.rename(todo, to: draft)
-        editingID = nil
+        if window.editingID == todo.id { window.editingID = nil }
+    }
+
+    private func cancelEdit() {
+        hasOpenEdit = false
+        if window.editingID == todo.id { window.editingID = nil }
     }
 
     private func motion(_ animation: Animation) -> Animation? {

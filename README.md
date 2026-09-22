@@ -17,10 +17,38 @@ with the Command Line Tools.
 ```
 
 This produces `build/Todo List.app`, renders the app icon, writes `Info.plist`,
-and ad-hoc signs the bundle. To install it, drag that app into `/Applications`
-(or run `cp -R "build/Todo List.app" /Applications/`).
+and ad-hoc signs the bundle. To install it, run:
+
+```bash
+./build.sh --install
+```
+
+That quits any running copy, replaces `/Applications/Todo List.app`, and
+launches it. Run the installed copy rather than the one in `build/`. The login
+item remembers where the app is, and `build/` is wiped on every build.
+
+## Test
+
+```bash
+./test.sh
+```
+
+Compiles the model and store with `Tests/main.swift` and runs the checks.
+These are plain assertions rather than XCTest, so the tests need only the
+Command Line Tools, like the app.
 
 ## Using it
+
+**⌃⌥⌘T** (Control-Option-Command-T) brings the window up from any app, and hides it
+again if it is already in front. For that to work the app has to be running, so:
+
+- Closing the window keeps the app running. Only **⌘Q** quits.
+- On first launch the app adds itself to your login items. Turn that off with
+  **Todo List ▸ Open at Login**, or in System Settings ▸ General ▸ Login Items.
+- To use a different shortcut, change `Summon` in `Sources/TodoListApp.swift`
+  and rebuild. macOS usually doesn't report a clash with another app's
+  shortcut. If pressing it does nothing, or does something else, another app
+  holds it, so pick a different one.
 
 A **Short Term / Long Term** toggle sits at the top of the window. Short term is
 the sectioned view — **Readings**, **Assignments**, **Emails**, and **Other**,
@@ -45,6 +73,12 @@ the section you typed it in.
   Renaming to an empty string deletes the task.
 - Hover and click the **×** to delete; right-click for the same actions in a
   context menu.
+- **⌘Z** undoes anything: a delete, a rename, a tick, Clear Completed.
+  **⇧⌘Z** redoes.
+- **Click a task** to select it, then use the keyboard: **↑ / ↓** move, **Space**
+  ticks it, **Return** renames, **S** stars, **⌫** deletes, and **Esc** clears the
+  selection. In an add field, **Esc** leaves the field so these keys reach the
+  list.
 - **Unstar all** in the footer takes the star off every task in the view you are
   on. It then turns into **Restore stars**, which puts back exactly the ones it
   removed - so a mis-click costs nothing. Starring anything by hand, or
@@ -52,8 +86,8 @@ the section you typed it in.
 - **All / Active / Starred / Done** filters whatever is on screen.
   **Clear Completed** removes finished tasks from the horizon you are viewing
   only, so clearing short term never touches long term.
-- **⌘Q** quits, and closing the window quits too. Every change is written to
-  disk the moment you make it, so nothing is lost either way.
+- Every change is written to disk the moment you make it, so quitting never
+  loses anything.
 
 ## Screenshots
 
@@ -92,6 +126,17 @@ over; copy it to move your tasks to another Mac. Older task files still load:
 tasks saved before sections existed land in **Assignments**, and tasks saved
 before the short/long term split count as **short term**.
 
+The app never overwrites a file it couldn't read. A banner at the top of the
+window explains any problem:
+
+- **The file isn't valid JSON.** It is renamed to `todos.unreadable-<time>.json`
+  in the same folder, and the app starts with an empty list.
+- **Some tasks can't be read.** The app loads the rest and first copies the
+  original to `todos.unreadable-<time>.json`.
+- **The file can't be opened**, usually because macOS denied access to
+  Documents. Saving is switched off, so the file isn't touched.
+- **A save fails.** The banner says so until a later save succeeds.
+
 ## Layout
 
 | Path                        | What it is                                          |
@@ -100,10 +145,13 @@ before the short/long term split count as **short term**.
 | `Sources/TodoStore.swift`   | Task list + load/save, the single source of truth   |
 | `Sources/DesignSystem.swift`| The palette and the three type roles                |
 | `Sources/ContentView.swift` | Window chrome, sections, the long-term list, rows   |
-| `Sources/FocusCoordinator.swift` | Routes ⌘-shortcuts to the right add field      |
-| `Sources/TodoListApp.swift` | App entry point, window, menu commands              |
+| `Sources/WindowState.swift` | Filter, selection, rename state; list keyboard keys |
+| `Sources/GlobalHotKey.swift`| The system-wide ⌃⌥⌘T shortcut                       |
+| `Sources/TodoListApp.swift` | App entry point, window, menus, open at login       |
+| `Tests/main.swift`          | Store and file-format tests, run by `test.sh`       |
 | `tools/MakeIcon.swift`      | Draws the icon into an `.iconset` at build time     |
-| `build.sh`                  | Compiles, assembles, and signs the `.app` bundle    |
+| `build.sh`                  | Compiles, assembles, signs, and optionally installs |
+| `test.sh`                   | Builds and runs the tests                           |
 
 ## The design
 

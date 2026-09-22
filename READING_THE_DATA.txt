@@ -44,8 +44,9 @@ FIELD       VALUES AND MEANING
 title       The task text. Free-form.
 horizon     "shortTerm" or "longTerm". Two separate views in the app.
 bucket      "readings", "assignments", "emails", or "other".
-            Only meaningful when horizon is "shortTerm". Long-term tasks are
-            shown as one flat list, so their bucket is a placeholder - ignore it.
+            Only present when horizon is "shortTerm". Long-term tasks are one
+            flat list with no sections. Files written by older versions may
+            still carry a placeholder bucket on long-term tasks - ignore it.
 isDone      true or false.
 isStarred   true or false. Starring does NOT change sort order.
 createdAt   ISO 8601 UTC. Not shown anywhere in the app.
@@ -54,6 +55,10 @@ id          UUID. Stable for the life of the task.
 Older files may be missing "bucket", "horizon", or "isStarred". The app fills in
 defaults when it loads them (bucket "assignments", horizon "shortTerm",
 isStarred false). Anything reading the file directly should do the same.
+
+You may also see todos.unreadable-<time>.json files beside it. When the app
+can't read todos.json, it keeps it under that name instead of overwriting it.
+They are not live data.
 
 
 3. READING IT
@@ -127,28 +132,36 @@ Safe procedure:
     cp "$HOME/Documents/Todo List/todos.json" ~/todos-backup.json
 
     # 3. edit the file, keeping the structure in section 2
-    #    - every task needs id, title, horizon, bucket, isDone, isStarred, createdAt
+    #    - every task needs id, title, horizon, isDone, isStarred, createdAt,
+    #      plus bucket when horizon is "shortTerm"
     #    - ids must be unique; generate new ones with: uuidgen
 
-    # 4. relaunch - whichever copy you actually use
-    open "$HOME/Downloads/Code/ToDo/build/Todo List.app"
-    # or, if you have dragged it there:
-    # open "/Applications/Todo List.app"
+    # 4. relaunch
+    open "/Applications/Todo List.app"
 
-If the app shows an empty list after an edit, the JSON is malformed - the app
-falls back to an empty list rather than crashing. Restore the backup and check
-the file parses:
+Check the file parses before relaunching:
 
-    python3 -m json.tool ~/todos-backup.json > /dev/null && echo "valid JSON"
+    python3 -m json.tool "$HOME/Documents/Todo List/todos.json" > /dev/null && echo "valid JSON"
+
+If it doesn't, the app does not overwrite it. It renames the file to
+todos.unreadable-<time>.json, starts with an empty list, and shows a banner
+saying so. If only some tasks are bad, it loads the rest and keeps a copy of the
+original under that name. Either way, fix the file (or restore your backup),
+quit, put it back as todos.json, and relaunch.
 
 
 5. THE APP ITSELF
 --------------------------------------------------------------------------------
-Source:     ~/Downloads/Code/ToDo
-Rebuild:    ./build.sh          (produces build/Todo List.app, takes seconds)
+Source:     wherever the repository is cloned
+Rebuild:    ./build.sh             (produces build/Todo List.app, takes seconds)
+Install:    ./build.sh --install   (replaces /Applications/Todo List.app, relaunches)
+Tests:      ./test.sh
 Preference: the remembered tab is stored separately, not in todos.json:
 
-    defaults read com.rubenhayrapetyan.todolist selectedHorizon
+    defaults read com.jasonpitchford.todolist selectedHorizon
+
+Closing the window does not quit the app; ⌃⌥⌘T brings it back from anywhere.
+Use the osascript quit above, or ⌘Q, to actually stop it.
 
 Deleting todos.json resets the app to empty. Copying it to another Mac moves
 the tasks with it.
