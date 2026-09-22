@@ -1,13 +1,20 @@
 #!/bin/bash
 # Builds "Todo List.app" from source. No Xcode project, no dependencies —
 # just the Swift compiler from the Command Line Tools.
+#
+#   ./build.sh            build into build/
+#   ./build.sh --install  build, then replace /Applications/Todo List.app and launch it
 set -euo pipefail
+
+INSTALL=false
+[[ "${1:-}" == "--install" ]] && INSTALL=true
 
 cd "$(dirname "$0")"
 
-APP_NAME="Todo List"
+# Override to install under another name, e.g. APP_NAME=Tasks ./build.sh --install
+APP_NAME="${APP_NAME:-Todo List}"
 EXECUTABLE="TodoList"
-BUNDLE_ID="com.rubenhayrapetyan.todolist"
+BUNDLE_ID="com.jasonpitchford.todolist"
 VERSION="1.0"
 
 BUILD_DIR="build"
@@ -64,3 +71,19 @@ codesign --force --sign - --timestamp=none "$APP"
 touch "$APP"
 
 echo "==> Built $APP"
+
+if $INSTALL; then
+  # The login item and the hotkey belong to whichever copy is running, so
+  # quit the old one before swapping it out.
+  echo "==> Installing to /Applications"
+  osascript -e "tell application id \"$BUNDLE_ID\" to quit" 2>/dev/null || true
+  # Launching again before the old copy has exited fails with error -600.
+  for _ in {1..50}; do
+    pgrep -f "/Applications/$APP_NAME.app/" >/dev/null || break
+    sleep 0.1
+  done
+  rm -rf "/Applications/$APP_NAME.app"
+  cp -R "$APP" /Applications/
+  open "/Applications/$APP_NAME.app"
+  echo "==> Installed and launched /Applications/$APP_NAME.app"
+fi

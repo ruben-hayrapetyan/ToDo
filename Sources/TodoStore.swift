@@ -12,12 +12,28 @@ final class TodoStore: ObservableObject {
     /// Session-only and deliberately not saved: a relaunch starts clean.
     @Published private(set) var unstarUndo: UnstarUndo?
 
+    /// Something the person needs to know about the task file — it could not be
+    /// read, was set aside, or is not being saved. Shown as a banner.
+    @Published private(set) var problem: String?
+
     struct UnstarUndo: Equatable {
         let horizon: Horizon
         let ids: Set<UUID>
     }
 
+    /// Set by the window so every change lands on Edit ▸ Undo. Optional because
+    /// tests and the design renderer run without one.
+    var undoManager: UndoManager?
+
     private let fileURL: URL
+
+    /// True when the file exists but could not be read or set aside. Saving then
+    /// would replace tasks we never loaded, so nothing is written at all.
+    private(set) var writesBlocked = false
+
+    /// Whether `problem` came from a failed save, so the next good save can
+    /// clear it without hiding a load problem.
+    private var problemIsSaveFailure = false
 
     /// Where tasks live: ~/Documents/Todo List/todos.json.
     ///
@@ -74,7 +90,7 @@ final class TodoStore: ObservableObject {
             self.fileURL = Self.defaultStoreURL
         }
         // Always, not just for the default path: without the folder every save
-        // fails silently and the tasks are never written.
+        // fails and the tasks are never written.
         try? FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true)
@@ -101,21 +117,30 @@ final class TodoStore: ObservableObject {
 
     /// Unfinished tasks left in one short-term section, for its header badge.
     func remainingCount(in bucket: Bucket) -> Int {
-        todos.filter { $0.horizon == .shortTerm && $0.bucket == bucket && !$0.isDone }.count
+        todos.filter { $0.place == .shortTerm(bucket) && !$0.isDone }.count
     }
 
     /// The tasks to draw in one short-term section.
     func items(in bucket: Bucket, filter: Filter) -> [Todo] {
         todos
-            .filter { $0.horizon == .shortTerm && $0.bucket == bucket && filter.matches($0) }
+            .filter { $0.place == .shortTerm(bucket) && filter.matches($0) }
             .sorted(by: Self.inOrder)
     }
 
     /// The long-term view is one flat list, so it ignores buckets entirely.
     func longTermItems(filter: Filter) -> [Todo] {
         todos
-            .filter { $0.horizon == .longTerm && filter.matches($0) }
+            .filter { $0.place == .longTerm && filter.matches($0) }
             .sorted(by: Self.inOrder)
+    }
+
+    /// Everything on screen for one view, top to bottom — the order the arrow
+    /// keys walk through.
+    func visibleItems(in horizon: Horizon, filter: Filter) -> [Todo] {
+        switch horizon {
+        case .shortTerm: return Bucket.allCases.flatMap { items(in: $0, filter: filter) }
+        case .longTerm:  return longTermItems(filter: filter)
+        }
     }
 
     /// Alphabetical, with finished tasks moved to the bottom. Stars do not
@@ -123,38 +148,43 @@ final class TodoStore: ObservableObject {
     ///
     /// The comparison is `localizedStandardCompare` — the same one Finder uses —
     /// so case is ignored and embedded numbers sort as numbers ("13.2" before
-    /// "13.10", not after).
-    private static func inOrder(_ a: Todo, _ b: Todo) -> Bool {
+    /// "13.10", not after). Equal titles fall back to age, then id, so two
+    /// identical tasks never swap places between redraws.
+    static func inOrder(_ a: Todo, _ b: Todo) -> Bool {
         if a.isDone != b.isDone { return !a.isDone }
-        return a.title.localizedStandardCompare(b.title) == .orderedAscending
+        switch a.title.localizedStandardCompare(b.title) {
+        case .orderedAscending:  return true
+        case .orderedDescending: return false
+        case .orderedSame:
+            if a.createdAt != b.createdAt { return a.createdAt < b.createdAt }
+            return a.id.uuidString < b.id.uuidString
+        }
     }
 
     // MARK: - Mutations
 
     func add(_ rawTitle: String, to bucket: Bucket) {
-        append(rawTitle, bucket: bucket, horizon: .shortTerm)
+        append(rawTitle, place: .shortTerm(bucket))
     }
 
-    /// Long-term tasks have no section; the bucket is a placeholder they never show.
     func addLongTerm(_ rawTitle: String) {
-        append(rawTitle, bucket: .other, horizon: .longTerm)
+        append(rawTitle, place: .longTerm)
     }
 
-    private func append(_ rawTitle: String, bucket: Bucket, horizon: Horizon) {
+    private func append(_ rawTitle: String, place: Place) {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
-        todos.append(Todo(title: title, bucket: bucket, horizon: horizon))
-        save()
+        change("Add Task") { $0.append(Todo(title: title, place: place)) }
     }
 
     func toggle(_ todo: Todo) {
-        update(todo) { $0.isDone.toggle() }
+        update(todo, "Mark as \(todo.isDone ? "Not Done" : "Done")") { $0.isDone.toggle() }
     }
 
     func toggleStar(_ todo: Todo) {
         // Once a star is set by hand, "restore" would fight the user.
         unstarUndo = nil
-        update(todo) { $0.isStarred.toggle() }
+        update(todo, todo.isStarred ? "Remove Star" : "Star") { $0.isStarred.toggle() }
     }
 
     func rename(_ todo: Todo, to rawTitle: String) {
@@ -162,14 +192,13 @@ final class TodoStore: ObservableObject {
         // An empty rename means "delete", matching how most task apps behave.
         if title.isEmpty {
             delete(todo)
-        } else {
-            update(todo) { $0.title = title }
+        } else if title != todo.title {
+            update(todo, "Rename") { $0.title = title }
         }
     }
 
     func delete(_ todo: Todo) {
-        todos.removeAll { $0.id == todo.id }
-        save()
+        change("Delete Task") { list in list.removeAll { $0.id == todo.id } }
     }
 
     /// Takes the star off every task in one horizon, remembering which ones so
@@ -178,50 +207,156 @@ final class TodoStore: ObservableObject {
     func unstarAll(in horizon: Horizon) {
         let ids = Set(todos.filter { $0.horizon == horizon && $0.isStarred }.map(\.id))
         guard !ids.isEmpty else { return }
-        for i in todos.indices where ids.contains(todos[i].id) {
-            todos[i].isStarred = false
+        change("Unstar All") { list in
+            for i in list.indices where ids.contains(list[i].id) {
+                list[i].isStarred = false
+            }
         }
         unstarUndo = UnstarUndo(horizon: horizon, ids: ids)
-        save()
     }
 
     /// Puts back exactly the stars the last `unstarAll` removed. Tasks deleted
     /// in the meantime are simply skipped.
     func restoreStars() {
         guard let undo = unstarUndo else { return }
-        for i in todos.indices where undo.ids.contains(todos[i].id) {
-            todos[i].isStarred = true
+        change("Restore Stars") { list in
+            for i in list.indices where undo.ids.contains(list[i].id) {
+                list[i].isStarred = true
+            }
         }
         unstarUndo = nil
-        save()
     }
 
     /// Scoped to the horizon on screen, so clearing one view never touches the other.
     func clearCompleted(in horizon: Horizon) {
-        todos.removeAll { $0.horizon == horizon && $0.isDone }
-        save()
+        change("Clear Completed") { list in list.removeAll { $0.horizon == horizon && $0.isDone } }
     }
 
-    private func update(_ todo: Todo, _ change: (inout Todo) -> Void) {
+    func dismissProblem() {
+        problem = nil
+        problemIsSaveFailure = false
+    }
+
+    private func update(_ todo: Todo, _ actionName: String, _ edit: (inout Todo) -> Void) {
         guard let i = todos.firstIndex(where: { $0.id == todo.id }) else { return }
-        change(&todos[i])
+        change(actionName) { edit(&$0[i]) }
+    }
+
+    /// The one path every mutation takes: apply it, save, and register an undo
+    /// that puts the whole list back. Snapshots are cheap at this size and can't
+    /// drift out of step with the change they reverse.
+    private func change(_ actionName: String, _ edit: (inout [Todo]) -> Void) {
+        let before = todos
+        edit(&todos)
+        guard todos != before else { return }
         save()
+        registerUndo(restoring: before, actionName: actionName)
+    }
+
+    private func registerUndo(restoring snapshot: [Todo], actionName: String) {
+        guard let undoManager = undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { store in
+            let current = store.todos
+            store.todos = snapshot
+            // Undo can bring back stars the restore control no longer knows about.
+            store.unstarUndo = nil
+            store.save()
+            store.registerUndo(restoring: current, actionName: actionName)   // redo
+        }
+        undoManager.setActionName(actionName)
     }
 
     // MARK: - Persistence
 
+    /// One task that failed to decode must not take the rest of the list with it.
+    private struct LossyTodo: Decodable {
+        let todo: Todo?
+        init(from decoder: Decoder) throws { todo = try? Todo(from: decoder) }
+    }
+
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL) else { return }
+        let fm = FileManager.default
+        // No file yet is the normal first launch, not an error.
+        guard fm.fileExists(atPath: fileURL.path) else { return }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            // Most often macOS denied access to Documents. The tasks are still
+            // there, so saving an empty list over them is the one thing not to do.
+            writesBlocked = true
+            problem = "Couldn't open \(fileURL.path) (\(error.localizedDescription)). "
+                + "Nothing will be saved until this is fixed, so the file is left untouched. "
+                + "Check System Settings ▸ Privacy & Security ▸ Files and Folders, then relaunch."
+            return
+        }
+
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        todos = (try? decoder.decode([Todo].self, from: data)) ?? []
+
+        if let entries = try? decoder.decode([LossyTodo].self, from: data) {
+            todos = entries.compactMap(\.todo)
+            let skipped = entries.count - todos.count
+            if skipped > 0 {
+                // The next save would drop the bad entries, so keep the original.
+                if let backup = setAside(copy: true) {
+                    problem = "\(skipped) task\(skipped == 1 ? "" : "s") couldn't be read and "
+                        + "\(skipped == 1 ? "was" : "were") left out. The original file is saved as \(backup.lastPathComponent)."
+                } else {
+                    writesBlocked = true
+                    problem = "\(skipped) task\(skipped == 1 ? "" : "s") couldn't be read, and a backup "
+                        + "couldn't be made, so nothing will be saved to avoid losing them."
+                }
+            }
+            return
+        }
+
+        // Not a task list at all. Move it out of the way rather than overwrite it.
+        if let aside = setAside(copy: false) {
+            problem = "Your task file couldn't be read, so it was moved to "
+                + "\(aside.lastPathComponent) in the same folder and you're starting with an empty list. "
+                + "Nothing in it was deleted."
+        } else {
+            writesBlocked = true
+            problem = "Your task file couldn't be read or moved aside, so nothing will be saved "
+                + "until it's fixed. The file is at \(fileURL.path)."
+        }
+    }
+
+    /// Moves or copies the task file to a timestamped name beside it.
+    private func setAside(copy: Bool) -> URL? {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        let destination = fileURL.deletingLastPathComponent()
+            .appendingPathComponent("todos.unreadable-\(stamp).json")
+        do {
+            if copy {
+                try FileManager.default.copyItem(at: fileURL, to: destination)
+            } else {
+                try FileManager.default.moveItem(at: fileURL, to: destination)
+            }
+            return destination
+        } catch {
+            return nil
+        }
     }
 
     private func save() {
+        guard !writesBlocked else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted]
-        guard let data = try? encoder.encode(todos) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        do {
+            let data = try encoder.encode(todos)
+            try data.write(to: fileURL, options: .atomic)
+            if problemIsSaveFailure { dismissProblem() }
+        } catch {
+            if problem == nil || problemIsSaveFailure {
+                problem = "Couldn't save your tasks (\(error.localizedDescription)). "
+                    + "Recent changes are only in memory and will be lost when the app quits."
+                problemIsSaveFailure = true
+            }
+        }
     }
 }

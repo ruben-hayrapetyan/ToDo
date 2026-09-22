@@ -54,40 +54,82 @@ enum Bucket: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Where a task lives. Only short-term tasks have a section, so long-term ones
+/// cannot carry a meaningless bucket.
+enum Place: Equatable {
+    case shortTerm(Bucket)
+    case longTerm
+
+    var horizon: Horizon {
+        switch self {
+        case .shortTerm: return .shortTerm
+        case .longTerm:  return .longTerm
+        }
+    }
+}
+
 /// A single task.
+///
+/// On disk the place is still written as flat `horizon` and `bucket` keys, so
+/// the file stays easy to read with jq. `bucket` is left out for long-term tasks.
 struct Todo: Identifiable, Codable, Equatable {
     let id: UUID
     var title: String
-    /// Which section a short-term task sits in. Long-term tasks are shown as
-    /// one flat list, so this is carried but never read for them.
-    var bucket: Bucket
-    var horizon: Horizon
+    var place: Place
     var isDone: Bool
     var isStarred: Bool
     var createdAt: Date
 
-    init(title: String, bucket: Bucket, horizon: Horizon = .shortTerm) {
+    var horizon: Horizon { place.horizon }
+
+    /// The short-term section, or nil for a long-term task.
+    var bucket: Bucket? {
+        if case .shortTerm(let bucket) = place { return bucket }
+        return nil
+    }
+
+    init(title: String, place: Place) {
         self.id = UUID()
         self.title = title
-        self.bucket = bucket
-        self.horizon = horizon
+        self.place = place
         self.isDone = false
         self.isStarred = false
         self.createdAt = Date()
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, title, horizon, bucket, isDone, isStarred, createdAt
+    }
+
     /// Decoded by hand so task files written by earlier versions — which had no
     /// bucket, star, or horizon — still load instead of throwing the whole list
-    /// away. Anything saved before horizons existed counts as short term.
+    /// away. Anything saved before horizons existed counts as short term, and
+    /// the placeholder bucket older versions wrote on long-term tasks is dropped.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         title = try c.decode(String.self, forKey: .title)
-        bucket = try c.decodeIfPresent(Bucket.self, forKey: .bucket) ?? .assignments
-        horizon = try c.decodeIfPresent(Horizon.self, forKey: .horizon) ?? .shortTerm
+        let horizon = try c.decodeIfPresent(Horizon.self, forKey: .horizon) ?? .shortTerm
+        switch horizon {
+        case .shortTerm:
+            place = .shortTerm(try c.decodeIfPresent(Bucket.self, forKey: .bucket) ?? .assignments)
+        case .longTerm:
+            place = .longTerm
+        }
         isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
         isStarred = try c.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(horizon, forKey: .horizon)
+        try c.encodeIfPresent(bucket, forKey: .bucket)
+        try c.encode(isDone, forKey: .isDone)
+        try c.encode(isStarred, forKey: .isStarred)
+        try c.encode(createdAt, forKey: .createdAt)
     }
 }
 
