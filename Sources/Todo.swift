@@ -79,6 +79,8 @@ struct Todo: Identifiable, Codable, Equatable {
     var isDone: Bool
     var isStarred: Bool
     var createdAt: Date
+    /// When the task is due, or nil for none.
+    var dueDate: Date?
 
     var horizon: Horizon { place.horizon }
 
@@ -98,7 +100,7 @@ struct Todo: Identifiable, Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, horizon, bucket, isDone, isStarred, createdAt
+        case id, title, horizon, bucket, isDone, isStarred, createdAt, dueDate
     }
 
     /// Decoded by hand so task files written by earlier versions — which had no
@@ -119,6 +121,7 @@ struct Todo: Identifiable, Codable, Equatable {
         isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? false
         isStarred = try c.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -130,6 +133,66 @@ struct Todo: Identifiable, Codable, Equatable {
         try c.encode(isDone, forKey: .isDone)
         try c.encode(isStarred, forKey: .isStarred)
         try c.encode(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(dueDate, forKey: .dueDate)
+    }
+}
+
+/// How a due date reads at a given moment.
+enum DueState: Equatable {
+    /// A day or more away: show the date itself.
+    case later(Date)
+    /// Under a day left: seconds remaining, counting down to 0.
+    case countdown(TimeInterval)
+    /// Past due: seconds since the deadline, counting up from 0.
+    case overdue(TimeInterval)
+
+    static let day: TimeInterval = 24 * 60 * 60
+
+    init(due: Date, now: Date) {
+        let remaining = due.timeIntervalSince(now)
+        if remaining <= 0 {
+            self = .overdue(-remaining)
+        } else if remaining < Self.day {
+            self = .countdown(remaining)
+        } else {
+            self = .later(due)
+        }
+    }
+
+    /// "4:07:09". Countdowns are always under a day, so hours are the top unit.
+    /// Rounds up, so the last second before the deadline shows 0:00:01 and the
+    /// deadline itself flips to overdue.
+    static func clock(_ seconds: TimeInterval) -> String {
+        let whole = Int(seconds.rounded(.up))
+        return String(format: "%d:%02d:%02d", whole / 3600, (whole % 3600) / 60, whole % 60)
+    }
+
+    /// How long ago the deadline was, in weeks, days, hours, minutes and
+    /// seconds, keeping only the three largest units from the biggest one that
+    /// is not zero: "1w 1d 3h", "3d 4h 5m", "1h 0m 5s", "5m 6s", "42s". Whole
+    /// seconds, rounded down, so it starts at 0s.
+    static func elapsed(_ seconds: TimeInterval) -> String {
+        var rest = Int(seconds.rounded(.down))
+        let sizes = [("w", 604_800), ("d", 86_400), ("h", 3600), ("m", 60), ("s", 1)]
+        var units: [(String, Int)] = []
+        for (name, size) in sizes {
+            units.append((name, rest / size))
+            rest %= size
+        }
+        let first = units.firstIndex { $0.1 > 0 } ?? units.count - 1
+        return units[first...].prefix(3).map { "\($0.1)\($0.0)" }.joined(separator: " ")
+    }
+
+    /// The text shown on the task row.
+    var text: String {
+        switch self {
+        case .later(let date):
+            return date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        case .countdown(let remaining):
+            return Self.clock(remaining)
+        case .overdue(let elapsed):
+            return "+" + Self.elapsed(elapsed)
+        }
     }
 }
 
@@ -149,5 +212,73 @@ enum Filter: String, CaseIterable, Identifiable {
         case .starred: return todo.isStarred
         case .done:    return todo.isDone
         }
+    }
+}
+
+/// Reads a due date out of what the person typed: "3pm", "tomorrow 5pm",
+/// "fri 9:30am", "9/25", "in 2 hours", "90m", "noon", "eod".
+enum DueParser {
+    private static let detector = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.date.rawValue)
+
+    static func parse(_ raw: String, now: Date = Date(), calendar: Calendar = .current) -> Date? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !text.isEmpty else { return nil }
+
+        if let later = duration(text) { return now.addingTimeInterval(later) }
+
+        func at(_ hour: Int, _ minute: Int, addingDays days: Int = 0) -> Date? {
+            let day = calendar.date(byAdding: .day, value: days, to: now) ?? now
+            return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day)
+        }
+
+        // Words the system parser doesn't know.
+        switch text {
+        case "eod", "end of day": return at(23, 59)
+        case "noon":              return at(12, 0).map { $0 > now ? $0 : at(12, 0, addingDays: 1)! }
+        case "midnight":          return at(23, 59)
+        default: break
+        }
+
+        guard let match = detector?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              var date = match.date else { return nil }
+
+        // "friday" alone comes back as noon. A day with no time means the day itself, so
+        // it is due at the end of it.
+        let hasTime = text.range(of: #"\d\s*(a|p)m?\b|\d:\d\d|noon|midnight|\bat\s+\d"#,
+                                 options: .regularExpression) != nil
+        if !hasTime { date = at(23, 59, addingDays: calendar.dateComponents(
+            [.day], from: calendar.startOfDay(for: now),
+            to: calendar.startOfDay(for: date)).day ?? 0) ?? date }
+
+        // A bare time that has already gone today means tomorrow.
+        if date <= now, calendar.isDate(date, inSameDayAs: now), !text.contains("today") {
+            date = calendar.date(byAdding: .day, value: 1, to: date) ?? date
+        }
+        return date
+    }
+
+    /// "2h", "30 min", "in 3 days", "1d 4h".
+    private static func duration(_ text: String) -> TimeInterval? {
+        var rest = text
+        if rest.hasPrefix("in ") { rest.removeFirst(3) }
+        let pattern = #"(\d+(?:\.\d+)?)\s*(d|day|days|h|hr|hrs|hour|hours|m|min|mins|minute|minutes)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let whole = NSRange(rest.startIndex..., in: rest)
+        let matches = regex.matches(in: rest, range: whole)
+        guard !matches.isEmpty else { return nil }
+
+        // Everything must be part of a duration, so "5 min past 3pm" isn't misread.
+        let leftover = regex.stringByReplacingMatches(in: rest, range: whole, withTemplate: "")
+            .trimmingCharacters(in: .whitespaces)
+        guard leftover.isEmpty || leftover == "and" else { return nil }
+
+        var total: TimeInterval = 0
+        for m in matches {
+            guard let n = Double(rest[Range(m.range(at: 1), in: rest)!]) else { return nil }
+            let unit = rest[Range(m.range(at: 2), in: rest)!]
+            total += n * (unit.hasPrefix("d") ? 86_400 : unit.hasPrefix("h") ? 3600 : 60)
+        }
+        return total
     }
 }

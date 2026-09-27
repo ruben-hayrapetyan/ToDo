@@ -189,6 +189,95 @@ test("unstar all, restore, and undo stay consistent") { dir in
     check(store.unstarUndo == nil, "restore retires itself")
 }
 
+// MARK: - Due dates
+
+test("due date round-trips, persists, and undoes") { dir in
+    let url = dir.appendingPathComponent("todos.json")
+    let store = TodoStore(storeURL: url)
+    let undo = UndoManager()
+    undo.groupsByEvent = false
+    store.undoManager = undo
+    func step(_ body: () -> Void) { undo.beginUndoGrouping(); body(); undo.endUndoGrouping() }
+    step { store.add("a", to: .readings) }
+    let due = Date(timeIntervalSince1970: 1_800_000_000)
+    step { store.setDue(store.todos[0], to: due) }
+    check(store.todos[0].dueDate == due, "due date set")
+    check(TodoStore(storeURL: url).todos.first?.dueDate == due, "due date reloads")
+    undo.undo()
+    check(store.todos[0].dueDate == nil, "undo clears it")
+    let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [[String: Any]]
+    check(saved[0]["dueDate"] == nil, "no key when unset")
+}
+
+test("due state: date, countdown, then overdue counting up from 0") { _ in
+    let due = Date(timeIntervalSince1970: 1_000_000)
+    func state(_ offset: TimeInterval) -> DueState { DueState(due: due, now: due.addingTimeInterval(offset)) }
+    check(state(-86_400) == .later(due), "a full day out shows the date")
+    check(state(-86_399) == .countdown(86_399), "just under a day counts down")
+    check(state(0) == .overdue(0), "at the deadline it is overdue at 0")
+    check(state(5) == .overdue(5), "then counts up")
+    check(DueState.countdown(3661).text == "1:01:01", "countdown text")
+    check(DueState.countdown(0.2).text == "0:00:01", "countdown rounds up")
+    func late(_ s: TimeInterval) -> String { DueState.overdue(s).text }
+    check(late(0) == "+0s", "overdue starts at zero")
+    check(late(59.9) == "+59s", "overdue rounds down")
+    check(late(61) == "+1m 1s", "minutes and seconds")
+    check(late(3600) == "+1h 0m 0s", "zeros inside the top three are kept")
+    check(late(3661) == "+1h 1m 1s", "hours, minutes, seconds")
+    check(late(90_061) == "+1d 1h 1m", "seconds drop off once days show")
+    check(late(702_121) == "+1w 1d 3h", "weeks, days, hours")
+    check(late(604_800) == "+1w 0d 0h", "exactly a week")
+    check(late(3 * 604_800 + 4 * 86_400 + 5 * 3600 + 59) == "+3w 4d 5h", "later weeks")
+}
+
+test("typed due dates") { _ in
+    let cal = Calendar.current
+    let now = Date()
+    func parts(_ s: String) -> (date: Date, c: DateComponents)? {
+        DueParser.parse(s, now: now, calendar: cal).map {
+            ($0, cal.dateComponents([.year, .month, .day, .weekday, .hour, .minute], from: $0)) }
+    }
+
+    // Worded dates are resolved by the system against the real clock, so these
+    // are checked relative to it rather than against a fixed date.
+    if let r = parts("3pm") {
+        check(r.c.hour == 15 && r.c.minute == 0, "3pm is 15:00")
+        check(r.date > now && r.date <= now.addingTimeInterval(86_400), "3pm is the next 3pm")
+    } else { check(false, "3pm parses") }
+
+    let tomorrow = cal.date(byAdding: .day, value: 1, to: now)!
+    if let r = parts("tomorrow 5pm") {
+        check(cal.isDate(r.date, inSameDayAs: tomorrow) && r.c.hour == 17, "tomorrow 5pm")
+    } else { check(false, "tomorrow 5pm parses") }
+
+    if let r = parts("fri 9:30am") {
+        check(r.c.weekday == 6 && r.c.hour == 9 && r.c.minute == 30, "friday with a time")
+    } else { check(false, "fri 9:30am parses") }
+
+    if let r = parts("friday") {
+        check(r.c.weekday == 6 && r.c.hour == 23 && r.c.minute == 59, "day alone → end of that day")
+    } else { check(false, "friday parses") }
+
+    // These are computed from the `now` passed in, so a fixed one works.
+    var nyCal = Calendar(identifier: .gregorian)
+    nyCal.timeZone = TimeZone(identifier: "America/New_York")!
+    let fixed = nyCal.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 11))!
+    func fixedParts(_ s: String) -> DateComponents? {
+        DueParser.parse(s, now: fixed, calendar: nyCal).map {
+            nyCal.dateComponents([.month, .day, .hour, .minute], from: $0) }
+    }
+    func dc(_ m: Int, _ d: Int, _ h: Int, _ min: Int) -> DateComponents {
+        DateComponents(month: m, day: d, hour: h, minute: min)
+    }
+    check(fixedParts("eod") == dc(9, 23, 23, 59), "eod")
+    check(fixedParts("in 2 hours") == dc(9, 23, 13, 0), "in 2 hours")
+    check(fixedParts("90m") == dc(9, 23, 12, 30), "90m")
+    check(fixedParts("1d 4h") == dc(9, 24, 15, 0), "1d 4h")
+    check(fixedParts("noon") == dc(9, 23, 12, 0) || fixedParts("noon") == dc(9, 24, 12, 0), "noon")
+    check(fixedParts("banana") == nil, "gibberish is nil")
+    check(fixedParts("   ") == nil, "blank is nil")
+}
+
 // MARK: - Migration
 
 test("migration moves once and never overwrites") { dir in

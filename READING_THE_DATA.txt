@@ -34,7 +34,8 @@ A flat JSON array. One object per task. No nesting, no separate files.
         "bucket":    "assignments",
         "isDone":    false,
         "isStarred": true,
-        "createdAt": "2026-09-01T03:53:02Z"
+        "createdAt": "2026-09-01T03:53:02Z",
+        "dueDate":   "2026-09-05T23:59:00Z"
       },
       ...
     ]
@@ -50,6 +51,7 @@ bucket      "readings", "assignments", "emails", or "other".
 isDone      true or false.
 isStarred   true or false. Starring does NOT change sort order.
 createdAt   ISO 8601 UTC. Not shown anywhere in the app.
+dueDate     ISO 8601 UTC. Optional - the key is absent when no due date is set.
 id          UUID. Stable for the life of the task.
 
 Older files may be missing "bucket", "horizon", or "isStarred". The app fills in

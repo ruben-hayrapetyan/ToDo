@@ -83,6 +83,7 @@ final class TodoStore: ObservableObject {
     /// `storeURL` exists so tests can point at a scratch file; the app always
     /// uses the default location.
     init(storeURL: URL? = nil) {
+        let isDefaultStore = storeURL == nil
         if let storeURL = storeURL {
             self.fileURL = storeURL
         } else {
@@ -95,6 +96,48 @@ final class TodoStore: ObservableObject {
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true)
         load()
+        // Only the real app takes daily snapshots; a test's scratch store
+        // shouldn't leave files behind next to it.
+        if isDefaultStore {
+            snapshotForToday()
+        }
+    }
+
+    // MARK: - Daily snapshots
+
+    /// ~/Documents/Todo List/saves — one JSON file per day, named by date.
+    private var savesDirectoryURL: URL {
+        fileURL.deletingLastPathComponent().appendingPathComponent("saves", isDirectory: true)
+    }
+
+    private static let snapshotDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.calendar = Calendar(identifier: .gregorian)
+        return formatter
+    }()
+
+    /// Writes today's snapshot the first time the app launches that day and
+    /// removes whatever snapshot was left from a previous day, so the saves
+    /// folder only ever holds today's copy.
+    private func snapshotForToday() {
+        let todayName = Self.snapshotDateFormatter.string(from: Date()) + ".json"
+        let todayURL = savesDirectoryURL.appendingPathComponent(todayName)
+        guard !FileManager.default.fileExists(atPath: todayURL.path) else { return }
+
+        let fm = FileManager.default
+        try? fm.createDirectory(at: savesDirectoryURL, withIntermediateDirectories: true)
+        if let previous = try? fm.contentsOfDirectory(at: savesDirectoryURL, includingPropertiesForKeys: nil) {
+            for file in previous {
+                try? fm.removeItem(at: file)
+            }
+        }
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted]
+        guard let data = try? encoder.encode(todos) else { return }
+        try? data.write(to: todayURL, options: .atomic)
     }
 
     // MARK: - Derived values
@@ -195,6 +238,11 @@ final class TodoStore: ObservableObject {
         } else if title != todo.title {
             update(todo, "Rename") { $0.title = title }
         }
+    }
+
+    /// Sets or clears (nil) a task's due date.
+    func setDue(_ todo: Todo, to date: Date?) {
+        update(todo, date == nil ? "Remove Due Date" : "Set Due Date") { $0.dueDate = date }
     }
 
     func delete(_ todo: Todo) {

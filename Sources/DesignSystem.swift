@@ -40,6 +40,9 @@ enum Paper {
     /// The marginal mark on a starred task.
     static let mark    = dynamic(hex(0xB08423), hex(0xD8A94A))
 
+    /// A task past its due date.
+    static let overdue = dynamic(hex(0xC0392B), hex(0xF0716A))
+
     static func accent(for horizon: Horizon) -> Color {
         horizon == .shortTerm ? fresh : aged
     }

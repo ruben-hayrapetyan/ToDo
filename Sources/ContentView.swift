@@ -466,6 +466,72 @@ struct LongTermList: View {
     }
 }
 
+// MARK: - Due date entry
+
+/// The popover for typing a due date: "3pm", "tomorrow 5pm", "fri 9am", "in 2
+/// hours". It shows how the text was read before anything is saved.
+struct DuePicker: View {
+    let current: Date?
+    let set: (Date?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var parsed: Date? { DueParser.parse(text) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            TextField("3pm, tomorrow 5pm, fri, in 2 hours…", text: $text)
+                .textFieldStyle(.plain)
+                .font(Face.task())
+                .foregroundStyle(Paper.ink)
+                .focused($focused)
+                .onSubmit(commit)
+                .padding(.bottom, 5)
+                .overlay(alignment: .bottom) { Rectangle().fill(Paper.rule).frame(height: 1) }
+
+            Group {
+                if let parsed = parsed {
+                    Text("→ " + parsed.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated)
+                        .day().hour().minute()))
+                        .foregroundStyle(Paper.ink)
+                } else if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Text("Can't read that")
+                        .foregroundStyle(Paper.overdue)
+                } else if let current = current {
+                    Text("now: " + current.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated)
+                        .day().hour().minute()))
+                        .foregroundStyle(Paper.muted)
+                } else {
+                    Text(" ")
+                }
+            }
+            .font(Face.code(10.5, weight: .medium))
+
+            HStack {
+                if current != nil {
+                    Button("Remove") { set(nil); dismiss() }
+                        .foregroundStyle(Paper.overdue)
+                }
+                Spacer()
+                Button("Set", action: commit)
+                    .disabled(parsed == nil)
+            }
+            .font(Face.code(10.5))
+        }
+        .frame(width: 250)
+        .padding(14)
+        .onAppear { focused = true }
+    }
+
+    private func commit() {
+        guard let date = parsed else { return }
+        set(date)
+        dismiss()
+    }
+}
+
 // MARK: - One task
 
 struct TaskRow: View {
@@ -476,6 +542,7 @@ struct TaskRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draft = ""
     @State private var isHovering = false
+    @State private var showingDuePicker = false
     /// True from the moment a rename starts until it is saved or cancelled —
     /// even if another row takes over `editingID` first, so the text typed here
     /// is saved rather than dropped.
@@ -515,6 +582,7 @@ struct TaskRow: View {
                         .onTapGesture(count: 2, perform: beginEdit)
                 }
 
+                dueButton
                 star
                 deleteButton
             }
@@ -548,6 +616,12 @@ struct TaskRow: View {
             Button(todo.isDone ? "Mark as not done" : "Mark as done") { store.toggle(todo) }
             Button(todo.isStarred ? "Remove star" : "Star") { store.toggleStar(todo) }
             Button("Edit…", action: beginEdit)
+            Button(todo.dueDate == nil ? "Set Due Date…" : "Change Due Date…") {
+                showingDuePicker = true
+            }
+            if todo.dueDate != nil {
+                Button("Remove Due Date") { store.setDue(todo, to: nil) }
+            }
             Divider()
             Button("Delete", role: .destructive) {
                 withAnimation(motion(.easeInOut(duration: 0.2))) { store.delete(todo) }
@@ -594,6 +668,50 @@ struct TaskRow: View {
         .buttonStyle(.plain)
         .opacity(todo.isStarred || isHovering ? 1 : 0)
         .help(todo.isStarred ? "Remove star" : "Star this task")
+    }
+
+    /// The due date, live: a date while it is a day or more away, a countdown
+    /// under a day, and red counting up once it has passed. With no date set it
+    /// is a calendar icon that fades in under the pointer.
+    private var dueButton: some View {
+        Button { showingDuePicker = true } label: {
+            if let due = todo.dueDate {
+                if todo.isDone {
+                    Text(DueState.later(due).text)
+                        .font(Face.code(10, weight: .medium))
+                        .foregroundStyle(Paper.faint)
+                        .fixedSize()
+                } else {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        let state = DueState(due: due, now: context.date)
+                        Text(state.text)
+                            .font(Face.code(10, weight: .medium))
+                            .monospacedDigit()
+                            .foregroundStyle(dueColor(state))
+                            .fixedSize()
+                    }
+                }
+            } else {
+                Image(systemName: "calendar")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Paper.faint)
+            }
+        }
+        .buttonStyle(.plain)
+        .opacity(todo.dueDate != nil || isHovering || showingDuePicker ? 1 : 0)
+        .help(todo.dueDate == nil ? "Set a due date" : "Change the due date")
+        .popover(isPresented: $showingDuePicker, arrowEdge: .bottom) {
+            DuePicker(current: todo.dueDate,
+                      set: { store.setDue(todo, to: $0) })
+        }
+    }
+
+    private func dueColor(_ state: DueState) -> Color {
+        switch state {
+        case .later:     return Paper.muted
+        case .countdown: return accent
+        case .overdue:   return Paper.overdue
+        }
     }
 
     private var deleteButton: some View {

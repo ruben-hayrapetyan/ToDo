@@ -66,6 +66,11 @@ the section you typed it in.
   their section and the section's count badge updates.
 - Click the **star** (it appears on hover) to flag a task. It stays lit where it
   sits; use the **Starred** filter to pull the flagged ones together.
+- Click the **calendar** (it appears on hover) or right-click ▸ **Set Due Date…**
+  to give a task a deadline. A day or more out it shows the date; under a day it
+  becomes a live **countdown**; once it passes it turns **red** and counts up from
+  `+0s` in weeks, days, hours, minutes and seconds, showing the three largest
+  (`+5m 6s`, `+3d 4h 5m`, `+1w 1d 3h`). Finished tasks just show the date.
 - Within a section tasks are **alphabetical**, with finished ones moved to the
   bottom. Stars do not change the order. Sorting ignores case and reads embedded
   numbers as numbers, so "Chapter 3" comes before "Chapter 11".
