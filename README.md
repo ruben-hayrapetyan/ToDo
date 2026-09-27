@@ -39,7 +39,7 @@ Command Line Tools, like the app.
 
 ## Using it
 
-**⌃⌥⌘T** (Control-Option-Command-T) brings the window up from any app, and hides it
+**⌃⌥Space** (Control-Option-Space) brings the window up from any app, and hides it
 again if it is already in front. For that to work the app has to be running, so:
 
 - Closing the window keeps the app running. Only **⌘Q** quits.
@@ -146,7 +146,7 @@ window explains any problem:
 | `Sources/DesignSystem.swift`| The palette and the three type roles                |
 | `Sources/ContentView.swift` | Window chrome, sections, the long-term list, rows   |
 | `Sources/WindowState.swift` | Filter, selection, rename state; list keyboard keys |
-| `Sources/GlobalHotKey.swift`| The system-wide ⌃⌥⌘T shortcut                       |
+| `Sources/GlobalHotKey.swift`| The system-wide ⌃⌥Space shortcut                       |
 | `Sources/TodoListApp.swift` | App entry point, window, menus, open at login       |
 | `Tests/main.swift`          | Store and file-format tests, run by `test.sh`       |
 | `tools/MakeIcon.swift`      | Draws the icon into an `.iconset` at build time     |

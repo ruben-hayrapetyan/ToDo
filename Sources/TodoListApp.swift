@@ -3,12 +3,16 @@ import Combine
 import ServiceManagement
 import SwiftUI
 
-/// The shortcut that summons the window from any app. ⌃⌥⌘T: T for todo.
-/// Plain ⌃⌥ letters are taken by window tilers such as SnappyTiler.
+/// The shortcut that summons the window from any app. ⌃⌥Space: two modifiers
+/// and the space bar, easy one-handed. It has to include ⌃ or ⌘: since macOS 15
+/// a hotkey made only of ⌥ or ⌥⇧ registers without error but is never
+/// delivered — the key press just types into the frontmost app. Kept off ⌥Space
+/// (Raycast's default). ⌃⌥Space is the system's "next input source" shortcut,
+/// which does nothing with a single keyboard layout enabled.
 enum Summon {
-    static let keyCode = kVK_ANSI_T
-    static let modifiers = controlKey | optionKey | cmdKey
-    static let label = "⌃⌥⌘T"
+    static let keyCode = kVK_Space
+    static let modifiers = controlKey | optionKey
+    static let label = "⌃⌥Space"
 }
 
 /// Owns the long-lived pieces so the global hotkey and the key monitor can

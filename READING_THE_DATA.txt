@@ -160,7 +160,7 @@ Preference: the remembered tab is stored separately, not in todos.json:
 
     defaults read com.jasonpitchford.todolist selectedHorizon
 
-Closing the window does not quit the app; ⌃⌥⌘T brings it back from anywhere.
+Closing the window does not quit the app; ⌃⌥Space brings it back from anywhere.
 Use the osascript quit above, or ⌘Q, to actually stop it.
 
 Deleting todos.json resets the app to empty. Copying it to another Mac moves
