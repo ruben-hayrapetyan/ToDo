@@ -803,6 +803,9 @@ struct TaskRow: View {
             QuarterPie(quarters: todo.progress)
                 .foregroundStyle(todo.progress > 0 ? accent : Paper.faint)
                 .frame(width: 10, height: 10)
+                // A plain button only takes clicks on what it draws, which for
+                // an empty pie is a hairline ring. Make the whole square count.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .opacity(!todo.isDone && (todo.progress > 0 || isHovering) ? 1 : 0)
