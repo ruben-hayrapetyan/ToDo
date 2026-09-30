@@ -35,7 +35,8 @@ A flat JSON array. One object per task. No nesting, no separate files.
         "isDone":    false,
         "isStarred": true,
         "createdAt": "2026-09-01T03:53:02Z",
-        "dueDate":   "2026-09-05T23:59:00Z"
+        "dueDate":   "2026-09-05T23:59:00Z",
+        "progress":  2
       },
       ...
     ]
@@ -52,11 +53,14 @@ isDone      true or false.
 isStarred   true or false. Starring does NOT change sort order.
 createdAt   ISO 8601 UTC. Not shown anywhere in the app.
 dueDate     ISO 8601 UTC. Optional - the key is absent when no due date is set.
+progress    0-3: how far along the task is, in quarters (2 = half done).
+            Optional - absent means 0. Kept when a task is ticked done, so
+            check isDone first; progress only matters while isDone is false.
 id          UUID. Stable for the life of the task.
 
-Older files may be missing "bucket", "horizon", or "isStarred". The app fills in
+Older files may be missing "bucket", "horizon", "isStarred", or "progress". The app fills in
 defaults when it loads them (bucket "assignments", horizon "shortTerm",
-isStarred false). Anything reading the file directly should do the same.
+isStarred false, progress 0). Anything reading the file directly should do the same.
 
 You may also see todos.unreadable-<time>.json files beside it. When the app
 can't read todos.json, it keeps it under that name instead of overwriting it.
@@ -82,6 +86,12 @@ Open assignments only:
 
     (The parentheses around .isDone | not matter. Without them jq pipes the
      boolean into the rest of the expression and errors out.)
+
+Part-done tasks, with how far along:
+
+    jq -r '.[] | select((.isDone | not) and (.progress // 0) > 0)
+           | "\(.progress)/4  \(.title)"' \
+      "$HOME/Documents/Todo List/todos.json"
 
 Starred tasks:
 

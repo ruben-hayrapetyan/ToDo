@@ -81,6 +81,11 @@ struct Todo: Identifiable, Codable, Equatable {
     var createdAt: Date
     /// When the task is due, or nil for none.
     var dueDate: Date?
+    /// How far along an unfinished task is, in quarters: 0 (not started) to 3.
+    /// Kept when the task is ticked, so unticking puts it back where it was.
+    var progress: Int = 0
+
+    static let quarters = 0...3
 
     var horizon: Horizon { place.horizon }
 
@@ -100,7 +105,7 @@ struct Todo: Identifiable, Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, horizon, bucket, isDone, isStarred, createdAt, dueDate
+        case id, title, horizon, bucket, isDone, isStarred, createdAt, dueDate, progress
     }
 
     /// Decoded by hand so task files written by earlier versions — which had no
@@ -122,6 +127,8 @@ struct Todo: Identifiable, Codable, Equatable {
         isStarred = try c.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate)
+        let quarters = try c.decodeIfPresent(Int.self, forKey: .progress) ?? 0
+        progress = min(max(quarters, Self.quarters.lowerBound), Self.quarters.upperBound)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -134,6 +141,7 @@ struct Todo: Identifiable, Codable, Equatable {
         try c.encode(isStarred, forKey: .isStarred)
         try c.encode(createdAt, forKey: .createdAt)
         try c.encodeIfPresent(dueDate, forKey: .dueDate)
+        if progress != 0 { try c.encode(progress, forKey: .progress) }
     }
 }
 

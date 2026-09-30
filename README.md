@@ -62,7 +62,7 @@ the section you typed it in.
   A shortcut aimed at the view you are not on switches to it first. Each field
   shows its own shortcut while idle, and the commands live in the **Add Task**
   menu.
-- Click the circle to mark a task done. Finished tasks drop to the bottom of
+- Click the box to mark a task done. Finished tasks drop to the bottom of
   their section and the section's count badge updates.
 - Click the **star** (it appears on hover) to flag a task. It stays lit where it
   sits; use the **Starred** filter to pull the flagged ones together.
@@ -71,6 +71,17 @@ the section you typed it in.
   becomes a live **countdown**; once it passes it turns **red** and counts up from
   `+0s` in weeks, days, hours, minutes and seconds, showing the three largest
   (`+5m 6s`, `+3d 4h 5m`, `+1w 1d 3h`). Finished tasks just show the date.
+- **Part done?** Click the **pie** (it appears on hover) to add a quarter:
+  ¼ → ½ → ¾ → back to none. Or select a task and press **1 / 2 / 3**, with
+  **0** to clear. The box fills with ink from the bottom to match, so a section
+  shows how far along everything is. Ticking the box still finishes the task,
+  and unticking it puts the quarters back. Part-done tasks count as open.
+- **One due date for many tasks:** select them (**⌘-click** to add one,
+  **⇧-click** or **⇧↑ / ⇧↓** for a run, **⌘A** for everything on screen), then
+  press **D**, click the calendar on any of them, or right-click ▸ **Set Due
+  Date for N Tasks…**. To date a whole section, hover its header and click the
+  calendar, or right-click it ▸ **Set Due Date for Every Open Assignment…**.
+  Either way, one **⌘Z** undoes the lot.
 - Within a section tasks are **alphabetical**, with finished ones moved to the
   bottom. Stars do not change the order. Sorting ignores case and reads embedded
   numbers as numbers, so "Chapter 3" comes before "Chapter 11".
@@ -81,8 +92,10 @@ the section you typed it in.
 - **⌘Z** undoes anything: a delete, a rename, a tick, Clear Completed.
   **⇧⌘Z** redoes.
 - **Click a task** to select it, then use the keyboard: **↑ / ↓** move, **Space**
-  ticks it, **Return** renames, **S** stars, **⌫** deletes, and **Esc** clears the
-  selection. In an add field, **Esc** leaves the field so these keys reach the
+  ticks it, **1–3 / 0** set progress, **D** sets a due date, **Return** renames,
+  **S** stars, **⌫** deletes, and **Esc** clears the selection. With several
+  selected, every key but Return acts on all of them, and so do the buttons on
+  any selected row. In an add field, **Esc** leaves the field so these keys reach the
   list.
 - **Unstar all** in the footer takes the star off every task in the view you are
   on. It then turns into **Restore stars**, which puts back exactly the ones it
@@ -151,6 +164,7 @@ window explains any problem:
 | `Sources/DesignSystem.swift`| The palette and the three type roles                |
 | `Sources/ContentView.swift` | Window chrome, sections, the long-term list, rows   |
 | `Sources/WindowState.swift` | Filter, selection, rename state; list keyboard keys |
+| `Sources/Selection.swift`   | Click, ⌘-click and ⇧-range selection rules          |
 | `Sources/GlobalHotKey.swift`| The system-wide ⌃⌥Space shortcut                       |
 | `Sources/TodoListApp.swift` | App entry point, window, menus, open at login       |
 | `Tests/main.swift`          | Store and file-format tests, run by `test.sh`       |

@@ -242,11 +242,58 @@ final class TodoStore: ObservableObject {
 
     /// Sets or clears (nil) a task's due date.
     func setDue(_ todo: Todo, to date: Date?) {
-        update(todo, date == nil ? "Remove Due Date" : "Set Due Date") { $0.dueDate = date }
+        setDue([todo], to: date)
     }
 
     func delete(_ todo: Todo) {
-        change("Delete Task") { list in list.removeAll { $0.id == todo.id } }
+        delete([todo])
+    }
+
+    // MARK: Several tasks at once
+
+    // Each of these is one change, so a single ⌘Z puts back the whole batch.
+
+    /// Sets or clears (nil) the due date on every task given.
+    func setDue(_ group: [Todo], to date: Date?) {
+        updateAll(group, named(date == nil ? "Remove Due Date" : "Set Due Date", group)) {
+            $0.dueDate = date
+        }
+    }
+
+    /// Every unfinished task in one section, for "set a due date on all of them".
+    func openItems(in bucket: Bucket) -> [Todo] {
+        todos.filter { $0.place == .shortTerm(bucket) && !$0.isDone }
+    }
+
+    func setDone(_ group: [Todo], _ done: Bool) {
+        updateAll(group, named(done ? "Mark as Done" : "Mark as Not Done", group)) { $0.isDone = done }
+    }
+
+    func setStarred(_ group: [Todo], _ starred: Bool) {
+        unstarUndo = nil
+        updateAll(group, named(starred ? "Star" : "Remove Star", group)) { $0.isStarred = starred }
+    }
+
+    /// Sets how far along the tasks are, in quarters (0 clears it). Saying a
+    /// task is part done also means it is not finished, so it is unticked.
+    func setProgress(_ group: [Todo], to quarters: Int) {
+        let quarters = min(max(quarters, Todo.quarters.lowerBound), Todo.quarters.upperBound)
+        updateAll(group, named(quarters == 0 ? "Clear Progress" : "Set Progress", group)) {
+            $0.progress = quarters
+            $0.isDone = false
+        }
+    }
+
+    func delete(_ group: [Todo]) {
+        let ids = Set(group.map(\.id))
+        change(group.count > 1 ? "Delete \(group.count) Tasks" : "Delete Task") { list in
+            list.removeAll { ids.contains($0.id) }
+        }
+    }
+
+    /// "Set Due Date", or "Set Due Date for 5 Tasks" when it covers several.
+    private func named(_ action: String, _ group: [Todo]) -> String {
+        group.count > 1 ? "\(action) for \(group.count) Tasks" : action
     }
 
     /// Takes the star off every task in one horizon, remembering which ones so
@@ -288,6 +335,13 @@ final class TodoStore: ObservableObject {
     private func update(_ todo: Todo, _ actionName: String, _ edit: (inout Todo) -> Void) {
         guard let i = todos.firstIndex(where: { $0.id == todo.id }) else { return }
         change(actionName) { edit(&$0[i]) }
+    }
+
+    private func updateAll(_ group: [Todo], _ actionName: String, _ edit: (inout Todo) -> Void) {
+        let ids = Set(group.map(\.id))
+        change(actionName) { list in
+            for i in list.indices where ids.contains(list[i].id) { edit(&list[i]) }
+        }
     }
 
     /// The one path every mutation takes: apply it, save, and register an undo

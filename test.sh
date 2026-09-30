@@ -9,6 +9,6 @@ xcrun swiftc \
   -swift-version 5 \
   -target "$(uname -m)-apple-macos13.0" \
   -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
-  Sources/Todo.swift Sources/TodoStore.swift Tests/main.swift \
+  Sources/Todo.swift Sources/TodoStore.swift Sources/Selection.swift Tests/main.swift \
   -o build/tests
 build/tests

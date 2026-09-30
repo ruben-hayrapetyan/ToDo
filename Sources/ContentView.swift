@@ -36,7 +36,7 @@ struct ContentView: View {
                     TaskList(horizon: horizon, filter: filter)
                 }
                 // Keep the arrow-key selection on screen.
-                .onChange(of: window.selectedID) { id in
+                .onChange(of: window.selection.cursor) { id in
                     if let id = id { proxy.scrollTo(id) }
                 }
             }
@@ -150,7 +150,7 @@ struct ContentView: View {
 
     private var footer: some View {
         HStack(spacing: 0) {
-            Text("\(store.totalCount(in: horizon)) tasks · \(store.doneCount(in: horizon)) done")
+            Text(footerCount)
                 .font(Face.code(10, weight: .medium))
                 .foregroundStyle(Paper.muted)
                 .layoutPriority(1)
@@ -169,6 +169,13 @@ struct ContentView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 9)
         .background(Paper.band)
+    }
+
+    /// The task tally, or with several selected, how many and what to press.
+    private var footerCount: String {
+        let selected = window.selection.chosen(from: store.visibleItems(in: horizon, filter: filter)).count
+        if selected > 1 { return "\(selected) selected · d sets a due date" }
+        return "\(store.totalCount(in: horizon)) tasks · \(store.doneCount(in: horizon)) done"
     }
 
     /// One control with two faces: it takes the star off everything in this
@@ -255,6 +262,11 @@ struct Hairline: View {
 struct SectionRule: View {
     let code: String
     let count: Int
+    /// Offered as a calendar under the pointer: one due date for every open
+    /// task in the section.
+    var setDue: (() -> Void)? = nil
+
+    @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 9) {
@@ -267,8 +279,21 @@ struct SectionRule: View {
                 .font(Face.code(10.5, weight: .medium))
                 .foregroundStyle(Paper.faint)
                 .monospacedDigit()
+            if let setDue = setDue {
+                Button(action: setDue) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Paper.faint)
+                }
+                .buttonStyle(.plain)
+                .opacity(isHovering && count > 0 ? 1 : 0)
+                .disabled(count == 0)
+                .help("Set one due date on every open task here")
+            }
         }
         .padding(.bottom, 7)
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -368,13 +393,26 @@ struct BucketSection: View {
     @EnvironmentObject private var store: TodoStore
     @EnvironmentObject private var window: WindowState
     @State private var draft = ""
+    @State private var showingDuePicker = false
     @FocusState private var fieldFocused: Bool
 
     private var items: [Todo] { store.items(in: bucket, filter: filter) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionRule(code: bucket.code, count: store.remainingCount(in: bucket))
+            SectionRule(code: bucket.code,
+                        count: store.remainingCount(in: bucket),
+                        setDue: { showingDuePicker = true })
+                .contextMenu {
+                    Button("Set Due Date for Every Open \(bucket.singular)…") { showingDuePicker = true }
+                        .disabled(store.openItems(in: bucket).isEmpty)
+                }
+                .popover(isPresented: $showingDuePicker, arrowEdge: .bottom) {
+                    let open = store.openItems(in: bucket)
+                    DuePicker(current: DuePicker.shared(by: open),
+                              subject: "every open \(bucket.singular.lowercased()) · \(open.count)",
+                              set: { store.setDue(store.openItems(in: bucket), to: $0) })
+                }
 
             if items.isEmpty {
                 NothingYet(text: filter == .all
@@ -398,7 +436,7 @@ struct BucketSection: View {
         .onAppear(perform: claimFocusIfWanted)
         .onChange(of: window.target) { _ in claimFocusIfWanted() }
         // Typing a new task and walking the list are separate modes.
-        .onChange(of: fieldFocused) { if $0 { window.selectedID = nil } }
+        .onChange(of: fieldFocused) { if $0 { window.selection.clear() } }
     }
 
     private func add() {
@@ -449,7 +487,7 @@ struct LongTermList: View {
         .onAppear(perform: claimFocusIfWanted)
         .onChange(of: window.target) { _ in claimFocusIfWanted() }
         // Typing a new task and walking the list are separate modes.
-        .onChange(of: fieldFocused) { if $0 { window.selectedID = nil } }
+        .onChange(of: fieldFocused) { if $0 { window.selection.clear() } }
     }
 
     private func add() {
@@ -472,7 +510,15 @@ struct LongTermList: View {
 /// hours". It shows how the text was read before anything is saved.
 struct DuePicker: View {
     let current: Date?
+    /// What the date goes on when that is more than one task: "5 tasks".
+    var subject: String? = nil
     let set: (Date?) -> Void
+
+    /// The due date the tasks already share, or nil when they differ.
+    static func shared(by group: [Todo]) -> Date? {
+        let dates = Set(group.map(\.dueDate))
+        return dates.count == 1 ? dates.first ?? nil : nil
+    }
 
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
@@ -482,6 +528,13 @@ struct DuePicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
+            if let subject = subject {
+                Text(subject)
+                    .font(Face.code(10, weight: .medium))
+                    .tracking(0.9)
+                    .foregroundStyle(Paper.muted)
+            }
+
             TextField("3pm, tomorrow 5pm, fri, in 2 hours…", text: $text)
                 .textFieldStyle(.plain)
                 .font(Face.task())
@@ -532,6 +585,44 @@ struct DuePicker: View {
     }
 }
 
+// MARK: - Progress
+
+/// How a quarter count reads in menus and help.
+private func quarterName(_ quarters: Int) -> String {
+    ["Not started", "¼ done", "½ done", "¾ done"][quarters]
+}
+
+/// The quarter-pie drawn beside a partly done task: an outline circle with
+/// one wedge per quarter, filled clockwise from twelve o'clock.
+struct QuarterPie: View {
+    let quarters: Int
+
+    var body: some View {
+        ZStack {
+            Wedge(fraction: Double(quarters) / 4)
+            Circle().strokeBorder(lineWidth: 1.1)
+        }
+    }
+
+    private struct Wedge: Shape {
+        let fraction: Double
+
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            guard fraction > 0 else { return path }
+            let centre = CGPoint(x: rect.midX, y: rect.midY)
+            path.move(to: centre)
+            // SwiftUI's y axis points down, so "counter-clockwise" here draws
+            // clockwise on screen.
+            path.addArc(center: centre, radius: min(rect.width, rect.height) / 2,
+                        startAngle: .degrees(-90), endAngle: .degrees(-90 + 360 * fraction),
+                        clockwise: false)
+            path.closeSubpath()
+            return path
+        }
+    }
+}
+
 // MARK: - One task
 
 struct TaskRow: View {
@@ -543,6 +634,8 @@ struct TaskRow: View {
     @State private var draft = ""
     @State private var isHovering = false
     @State private var showingDuePicker = false
+    /// The tasks the open due-date popover will set, fixed when it opens.
+    @State private var dueTargets: [Todo] = []
     /// True from the moment a rename starts until it is saved or cancelled —
     /// even if another row takes over `editingID` first, so the text typed here
     /// is saved rather than dropped.
@@ -550,8 +643,18 @@ struct TaskRow: View {
     @FocusState private var editFocused: Bool
 
     private var isEditing: Bool { window.editingID == todo.id }
-    private var isSelected: Bool { window.selectedID == todo.id }
+    private var isSelected: Bool { window.selection.contains(todo.id) }
     private var accent: Color { Paper.accent(for: todo.horizon) }
+
+    /// What the row's controls act on: the whole selection when this task is
+    /// part of one, otherwise just this task.
+    private var targets: [Todo] { window.targets(for: todo, in: store) }
+
+    /// The single-task wording, or the batch wording when acting on several.
+    private func phrase(_ one: String, _ many: (Int) -> String) -> String {
+        let count = targets.count
+        return count > 1 ? many(count) : one
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -580,8 +683,14 @@ struct TaskRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2, perform: beginEdit)
+                        // A single click selects the row for the arrow keys; it
+                        // does not wait on the double-click that starts a
+                        // rename. On the title only, so the row's buttons act
+                        // on the selection instead of replacing it.
+                        .simultaneousGesture(TapGesture().onEnded(select))
                 }
 
+                progressButton
                 dueButton
                 star
                 deleteButton
@@ -600,9 +709,6 @@ struct TaskRow: View {
         }
         .background(isSelected ? accent.opacity(0.12) : isHovering ? Paper.hover : Color.clear)
         .onHover { isHovering = $0 }
-        // A single click selects the row for the arrow keys; it does not wait
-        // on the double-click that starts a rename.
-        .simultaneousGesture(TapGesture().onEnded(select))
         .onAppear { if isEditing { openEdit() } }
         .onChange(of: window.editingID) { id in
             if id == todo.id {
@@ -612,36 +718,65 @@ struct TaskRow: View {
                 commitEdit()
             }
         }
+        .onChange(of: window.dueRequest) { id in
+            guard id == todo.id else { return }
+            openDuePicker()
+            window.dueRequest = nil
+        }
         .contextMenu {
-            Button(todo.isDone ? "Mark as not done" : "Mark as done") { store.toggle(todo) }
-            Button(todo.isStarred ? "Remove star" : "Star") { store.toggleStar(todo) }
-            Button("Edit…", action: beginEdit)
-            Button(todo.dueDate == nil ? "Set Due Date…" : "Change Due Date…") {
-                showingDuePicker = true
+            Button(todo.isDone
+                   ? phrase("Mark as Not Done") { "Mark \($0) as Not Done" }
+                   : phrase("Mark as Done") { "Mark \($0) as Done" }) {
+                store.setDone(targets, !todo.isDone)
             }
-            if todo.dueDate != nil {
-                Button("Remove Due Date") { store.setDue(todo, to: nil) }
+            Picker(phrase("Progress") { "Progress for \($0) Tasks" }, selection: Binding(
+                get: { todo.isDone ? -1 : todo.progress },
+                set: { store.setProgress(targets, to: $0) })) {
+                ForEach(Todo.quarters, id: \.self) { Text(quarterName($0)).tag($0) }
+            }
+            Button(todo.isStarred
+                   ? phrase("Remove Star") { "Remove \($0) Stars" }
+                   : phrase("Star") { "Star \($0) Tasks" }) {
+                store.setStarred(targets, !todo.isStarred)
+            }
+            Button("Edit…", action: beginEdit)
+            Button(targets.count > 1
+                   ? "Set Due Date for \(targets.count) Tasks…"
+                   : todo.dueDate == nil ? "Set Due Date…" : "Change Due Date…") {
+                openDuePicker()
+            }
+            if targets.contains(where: { $0.dueDate != nil }) {
+                Button(phrase("Remove Due Date") { "Remove Due Dates from \($0) Tasks" }) {
+                    store.setDue(targets, to: nil)
+                }
             }
             Divider()
-            Button("Delete", role: .destructive) {
-                withAnimation(motion(.easeInOut(duration: 0.2))) { store.delete(todo) }
+            Button(phrase("Delete") { "Delete \($0) Tasks" }, role: .destructive) {
+                withAnimation(motion(.easeInOut(duration: 0.2))) { store.delete(targets) }
             }
         }
     }
 
-    /// A ruled box, the way a checklist is drawn by hand — not the system circle.
+    /// A ruled box, the way a checklist is drawn by hand — not the system
+    /// circle. A part-done task fills with a wash of ink from the bottom, a
+    /// quarter at a time; a finished one is solid with a tick.
     private var checkbox: some View {
-        Button {
-            withAnimation(motion(.easeInOut(duration: 0.18))) { store.toggle(todo) }
+        let box = RoundedRectangle(cornerRadius: 3, style: .continuous)
+        let partial = todo.isDone ? 0 : todo.progress
+        return Button {
+            withAnimation(motion(.easeInOut(duration: 0.18))) { store.setDone(targets, !todo.isDone) }
         } label: {
             ZStack {
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .strokeBorder(todo.isDone ? accent : Paper.faint, lineWidth: 1.2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .fill(todo.isDone ? accent : Color.clear)
-                    )
-                    .frame(width: 14, height: 14)
+                ZStack(alignment: .bottom) {
+                    box.fill(todo.isDone ? accent : Color.clear)
+                    Rectangle()
+                        .fill(accent.opacity(0.45))
+                        .frame(height: 14 * CGFloat(partial) / 4)
+                }
+                .frame(width: 14, height: 14)
+                .clipShape(box)
+                .overlay(box.strokeBorder(todo.isDone || partial > 0 ? accent : Paper.faint,
+                                          lineWidth: 1.2))
 
                 if todo.isDone {
                     Image(systemName: "checkmark")
@@ -652,14 +787,36 @@ struct TaskRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(todo.isDone ? "Mark as not done" : "Mark as done")
+        .help(todo.isDone
+              ? phrase("Mark as not done") { "Mark \($0) tasks as not done" }
+              : phrase("Mark as done") { "Mark \($0) tasks as done" })
+    }
+
+    /// Each click adds a quarter, and after ¾ it goes back to none. It never
+    /// finishes the task: that is the checkbox's job. Shows while a task is
+    /// part done, otherwise fades in under the pointer; hidden once finished.
+    private var progressButton: some View {
+        let next = (todo.progress + 1) % (Todo.quarters.upperBound + 1)
+        return Button {
+            withAnimation(motion(.easeOut(duration: 0.18))) { store.setProgress(targets, to: next) }
+        } label: {
+            QuarterPie(quarters: todo.progress)
+                .foregroundStyle(todo.progress > 0 ? accent : Paper.faint)
+                .frame(width: 10, height: 10)
+        }
+        .buttonStyle(.plain)
+        .opacity(!todo.isDone && (todo.progress > 0 || isHovering) ? 1 : 0)
+        .disabled(todo.isDone)
+        .help("\(quarterName(todo.progress)) · click for \(quarterName(next).lowercased())"
+              + (targets.count > 1 ? " on all \(targets.count)" : "")
+              + " · keys 1–3, 0 clears")
     }
 
     /// Stays on show once starred, alongside the marginal mark; otherwise it
     /// fades in under the pointer.
     private var star: some View {
         Button {
-            withAnimation(motion(.easeOut(duration: 0.18))) { store.toggleStar(todo) }
+            withAnimation(motion(.easeOut(duration: 0.18))) { store.setStarred(targets, !todo.isStarred) }
         } label: {
             Image(systemName: todo.isStarred ? "star.fill" : "star")
                 .font(.system(size: 10))
@@ -667,14 +824,16 @@ struct TaskRow: View {
         }
         .buttonStyle(.plain)
         .opacity(todo.isStarred || isHovering ? 1 : 0)
-        .help(todo.isStarred ? "Remove star" : "Star this task")
+        .help(todo.isStarred
+              ? phrase("Remove star") { "Remove \($0) stars" }
+              : phrase("Star this task") { "Star \($0) tasks" })
     }
 
     /// The due date, live: a date while it is a day or more away, a countdown
     /// under a day, and red counting up once it has passed. With no date set it
     /// is a calendar icon that fades in under the pointer.
     private var dueButton: some View {
-        Button { showingDuePicker = true } label: {
+        Button(action: openDuePicker) {
             if let due = todo.dueDate {
                 if todo.isDone {
                     Text(DueState.later(due).text)
@@ -699,10 +858,13 @@ struct TaskRow: View {
         }
         .buttonStyle(.plain)
         .opacity(todo.dueDate != nil || isHovering || showingDuePicker ? 1 : 0)
-        .help(todo.dueDate == nil ? "Set a due date" : "Change the due date")
+        .help(targets.count > 1
+              ? "Set one due date on all \(targets.count) selected tasks"
+              : todo.dueDate == nil ? "Set a due date" : "Change the due date")
         .popover(isPresented: $showingDuePicker, arrowEdge: .bottom) {
-            DuePicker(current: todo.dueDate,
-                      set: { store.setDue(todo, to: $0) })
+            DuePicker(current: DuePicker.shared(by: dueTargets),
+                      subject: dueTargets.count > 1 ? "\(dueTargets.count) tasks" : nil,
+                      set: { store.setDue(dueTargets, to: $0) })
         }
     }
 
@@ -716,7 +878,7 @@ struct TaskRow: View {
 
     private var deleteButton: some View {
         Button {
-            withAnimation(motion(.easeInOut(duration: 0.2))) { store.delete(todo) }
+            withAnimation(motion(.easeInOut(duration: 0.2))) { store.delete(targets) }
         } label: {
             Image(systemName: "xmark")
                 .font(.system(size: 9, weight: .semibold))
@@ -724,12 +886,29 @@ struct TaskRow: View {
         }
         .buttonStyle(.plain)
         .opacity(isHovering && !isEditing ? 1 : 0)
-        .help("Delete task")
+        .help(phrase("Delete task") { "Delete \($0) selected tasks" })
     }
 
+    /// Captures who the date is for when the popover opens, so it cannot drift
+    /// if the selection changes underneath it.
+    private func openDuePicker() {
+        dueTargets = targets
+        showingDuePicker = true
+    }
+
+    /// A click picks this task; ⌘-click adds it to or drops it from the
+    /// selection; ⇧-click selects the run from the last click to here.
     private func select() {
         guard !isEditing else { return }
-        window.selectedID = todo.id
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            window.selection.toggle(todo.id)
+        } else if flags.contains(.shift) {
+            let order = store.visibleItems(in: todo.horizon, filter: window.filter).map(\.id)
+            window.selection.extend(to: todo.id, in: order)
+        } else {
+            window.selection.select(todo.id)
+        }
         // Take the cursor out of any add field so the arrow keys reach the list.
         NSApp.keyWindow?.makeFirstResponder(nil)
     }

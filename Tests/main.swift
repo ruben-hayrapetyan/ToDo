@@ -278,6 +278,147 @@ test("typed due dates") { _ in
     check(fixedParts("   ") == nil, "blank is nil")
 }
 
+// MARK: - Keeping existing data
+
+test("a file from before progress keeps every field through a save") { dir in
+    let url = dir.appendingPathComponent("todos.json")
+    try write("""
+    [
+      {"id":"D03C6939-CC09-44B1-8B16-B456A167BDA1","title":"Math HW 2","horizon":"shortTerm",
+       "bucket":"assignments","isDone":false,"isStarred":true,
+       "createdAt":"2026-09-01T03:53:02Z","dueDate":"2026-09-05T23:59:00Z"},
+      {"id":"E03C6939-CC09-44B1-8B16-B456A167BDA1","title":"Someday","horizon":"longTerm",
+       "isDone":true,"isStarred":false,"createdAt":"2026-09-02T10:00:00Z"}
+    ]
+    """, to: url)
+    let before = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [[String: Any]]
+    let store = TodoStore(storeURL: url)
+    check(store.problem == nil, "loads cleanly")
+    // Force a save by changing something unrelated, then changing it back.
+    store.add("temp", to: .other)
+    store.delete(store.todos.first { $0.title == "temp" }!)
+    let after = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [[String: Any]]
+    check(after.count == before.count, "same number of tasks")
+    for (old, new) in zip(before, after) {
+        check(NSDictionary(dictionary: old).isEqual(to: new),
+              "task saved back exactly (was \(old), now \(new))")
+    }
+}
+
+// MARK: - Progress
+
+test("progress persists, is left out when empty, and survives a tick") { dir in
+    let url = dir.appendingPathComponent("todos.json")
+    let store = TodoStore(storeURL: url)
+    store.add("Hamlet", to: .readings)
+    store.setProgress([store.todos[0]], to: 2)
+    check(store.todos[0].progress == 2, "set to half")
+    check(TodoStore(storeURL: url).todos[0].progress == 2, "reloads")
+    store.setDone([store.todos[0]], true)
+    check(store.todos[0].isDone && store.todos[0].progress == 2, "ticking keeps the quarters")
+    store.setDone([store.todos[0]], false)
+    check(store.todos[0].progress == 2, "unticking puts them back")
+    store.setDone([store.todos[0]], true)
+    store.setProgress([store.todos[0]], to: 1)
+    check(!store.todos[0].isDone, "setting progress unticks")
+    store.setProgress([store.todos[0]], to: 9)
+    check(store.todos[0].progress == 3, "clamped to ¾")
+    store.setProgress([store.todos[0]], to: 0)
+    let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [[String: Any]]
+    check(saved[0]["progress"] == nil, "no key when empty")
+}
+
+test("out-of-range progress in the file is clamped, not rejected") { dir in
+    let url = dir.appendingPathComponent("todos.json")
+    try write("""
+    [{"id":"D03C6939-CC09-44B1-8B16-B456A167BDA1","title":"a","progress":7},
+     {"id":"E03C6939-CC09-44B1-8B16-B456A167BDA1","title":"b","progress":-2}]
+    """, to: url)
+    let store = TodoStore(storeURL: url)
+    check(store.todos.map(\.progress) == [3, 0], "clamped (got \(store.todos.map(\.progress)))")
+}
+
+// MARK: - Several at once
+
+test("one due date on many tasks is one undo step") { dir in
+    let store = TodoStore(storeURL: dir.appendingPathComponent("todos.json"))
+    let undo = UndoManager()
+    undo.groupsByEvent = false
+    store.undoManager = undo
+    func step(_ body: () -> Void) { undo.beginUndoGrouping(); body(); undo.endUndoGrouping() }
+    step { for t in ["a", "b", "c"] { store.add(t, to: .assignments) } }
+    step { store.add("r", to: .readings) }
+    let early = Date(timeIntervalSince1970: 1_700_000_000)
+    step { store.setDue([store.todos[0]], to: early) }
+    let due = Date(timeIntervalSince1970: 1_800_000_000)
+    step { store.setDue(store.openItems(in: .assignments), to: due) }
+    check(store.todos.filter { $0.bucket == .assignments }.allSatisfy { $0.dueDate == due }, "all set")
+    check(store.todos.first { $0.bucket == .readings }?.dueDate == nil, "other sections untouched")
+    check(undo.undoActionName == "Set Due Date for 3 Tasks", "menu names the batch (got \(undo.undoActionName))")
+    undo.undo()
+    check(store.todos.map(\.dueDate) == [early, nil, nil, nil], "one undo puts every date back")
+}
+
+test("open items leave out finished tasks") { dir in
+    let store = TodoStore(storeURL: dir.appendingPathComponent("todos.json"))
+    store.add("a", to: .assignments); store.add("b", to: .assignments)
+    store.toggle(store.todos[1])
+    check(store.openItems(in: .assignments).map(\.title) == ["a"], "done one skipped")
+}
+
+test("batch done, star, and delete") { dir in
+    let store = TodoStore(storeURL: dir.appendingPathComponent("todos.json"))
+    for t in ["a", "b", "c"] { store.add(t, to: .emails) }
+    let two = Array(store.todos.prefix(2))
+    store.setDone(two, true)
+    store.setStarred(two, true)
+    check(store.todos.map(\.isDone) == [true, true, false], "two ticked")
+    check(store.todos.map(\.isStarred) == [true, true, false], "two starred")
+    store.delete(two)
+    check(store.todos.map(\.title) == ["c"], "two deleted")
+}
+
+// MARK: - Selection
+
+test("selection: click, ⌘-click, ⇧-click and ⇧-arrows") { _ in
+    let ids = (0..<5).map { _ in UUID() }
+    var sel = Selection()
+    sel.move(by: 1, in: ids, extending: false)
+    check(sel.ids == [ids[0]] && sel.cursor == ids[0], "↓ from nothing lands on the first")
+    sel.move(by: 1, in: ids, extending: true)
+    sel.move(by: 1, in: ids, extending: true)
+    check(sel.ids == Set(ids[0...2]) && sel.cursor == ids[2], "⇧↓ grows the run")
+    sel.move(by: -1, in: ids, extending: true)
+    check(sel.ids == Set(ids[0...1]), "⇧↑ shrinks it back toward the anchor")
+    sel.select(ids[3])
+    sel.extend(to: ids[1], in: ids)
+    check(sel.ids == Set(ids[1...3]), "⇧-click upward runs from the anchor")
+    sel.toggle(ids[4])
+    check(sel.ids == Set(ids[1...4]), "⌘-click adds")
+    sel.toggle(ids[2])
+    check(sel.ids == [ids[1], ids[3], ids[4]], "⌘-click drops")
+    sel.move(by: 1, in: ids, extending: false)
+    check(sel.ids == [ids[3]], "plain arrow collapses to one")
+    sel.toggle(ids[3])
+    check(sel.isEmpty && sel.cursor == nil, "dropping the last one clears everything")
+    sel.extend(to: ids[2], in: ids)
+    check(sel.ids == [ids[2]], "⇧-click with no anchor is a plain click")
+    sel.selectAll(ids)
+    check(sel.count == 5, "select all")
+    sel.move(by: -1, in: [], extending: false)
+    check(sel.count == 5, "an empty list leaves it alone")
+}
+
+test("selection keeps on-screen order, even across sections") { dir in
+    let store = TodoStore(storeURL: dir.appendingPathComponent("todos.json"))
+    store.add("r", to: .readings); store.add("m", to: .emails); store.add("a", to: .assignments)
+    let visible = store.visibleItems(in: .shortTerm, filter: .all)
+    var sel = Selection()
+    sel.select(visible[0].id)
+    sel.extend(to: visible[2].id, in: visible.map(\.id))
+    check(sel.chosen(from: visible).map(\.title) == ["r", "a", "m"], "reading, assignment, email")
+}
+
 // MARK: - Migration
 
 test("migration moves once and never overwrites") { dir in
