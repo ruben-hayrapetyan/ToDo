@@ -4,10 +4,14 @@
 #
 #   ./build.sh            build into build/
 #   ./build.sh --install  build, then replace /Applications/Todo List.app and launch it
+#   ./build.sh --release  build for Apple silicon and Intel, then zip the app with
+#                         QUICKSTART.txt into build/ for a GitHub release
 set -euo pipefail
 
 INSTALL=false
+RELEASE=false
 [[ "${1:-}" == "--install" ]] && INSTALL=true
+[[ "${1:-}" == "--release" ]] && RELEASE=true
 
 cd "$(dirname "$0")"
 
@@ -27,13 +31,21 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$MACOS_DIR" "$RES_DIR"
 
 echo "==> Compiling Swift sources"
-xcrun swiftc \
-  -O \
-  -swift-version 5 \
-  -target "$(uname -m)-apple-macos13.0" \
-  -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
-  Sources/*.swift \
-  -o "$MACOS_DIR/$EXECUTABLE"
+# A local build only has to run on this Mac. A release has to run on any Mac,
+# so it carries both architectures in one binary.
+ARCHS=("$(uname -m)")
+$RELEASE && ARCHS=(arm64 x86_64)
+for ARCH in "${ARCHS[@]}"; do
+  xcrun swiftc \
+    -O \
+    -swift-version 5 \
+    -target "$ARCH-apple-macos13.0" \
+    -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+    Sources/*.swift \
+    -o "$BUILD_DIR/$EXECUTABLE-$ARCH"
+done
+lipo -create "$BUILD_DIR/$EXECUTABLE-"* -output "$MACOS_DIR/$EXECUTABLE"
+rm "$BUILD_DIR/$EXECUTABLE-"*
 
 echo "==> Rendering app icon"
 ICONSET="$BUILD_DIR/AppIcon.iconset"
@@ -71,6 +83,23 @@ codesign --force --sign - --timestamp=none "$APP"
 touch "$APP"
 
 echo "==> Built $APP"
+
+if $RELEASE; then
+  # Unzips to one folder holding the app and the guide to opening it, since an
+  # app that isn't notarized needs a step or two the first time.
+  echo "==> Zipping for release"
+  STAGE="$BUILD_DIR/$APP_NAME"
+  mkdir "$STAGE"
+  ditto "$APP" "$STAGE/$APP_NAME.app"
+  cp QUICKSTART.txt "$STAGE/Quick Start.txt"
+  ZIP="$BUILD_DIR/${APP_NAME// /-}-$VERSION.zip"
+  # --norsrc leaves out this Mac's extended attributes. Kept, they become ._
+  # files in the zip, and an unzip that doesn't fold them back in leaves one
+  # inside the bundle, which breaks its signature.
+  ditto -c -k --norsrc --keepParent "$STAGE" "$ZIP"
+  rm -rf "$STAGE"
+  echo "==> Zipped $ZIP"
+fi
 
 if $INSTALL; then
   # The login item and the hotkey belong to whichever copy is running, so

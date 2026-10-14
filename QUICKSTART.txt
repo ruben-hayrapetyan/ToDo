@@ -1,0 +1,107 @@
+================================================================================
+TODO LIST - QUICK START
+================================================================================
+A small to-do app for the Mac. Needs macOS 13 (Ventura) or later, on Apple
+silicon or Intel. Takes about two minutes to set up.
+
+
+1. INSTALL
+--------------------------------------------------------------------------------
+Drag "Todo List.app" into your Applications folder.
+
+Run it from Applications, not from Downloads. The app opens itself at login,
+and macOS remembers where it was when that was switched on.
+
+
+2. OPEN IT THE FIRST TIME
+--------------------------------------------------------------------------------
+The app is free and isn't notarized by Apple, so macOS blocks the first launch.
+You only have to do this once.
+
+macOS 15 (Sequoia) or later:
+  1. Double-click Todo List. macOS says it "could not verify" the app.
+     Click Done.
+  2. Open System Settings > Privacy & Security and scroll down to Security.
+     Next to "Todo List was blocked", click Open Anyway.
+  3. Enter your password, then click Open Anyway again.
+
+macOS 13 or 14:
+  Control-click (or right-click) Todo List in Applications, choose Open, then
+  click Open in the dialog.
+
+If neither works, paste this into Terminal and press Return, then open the app
+normally:
+
+    xattr -dr com.apple.quarantine "/Applications/Todo List.app"
+
+
+3. THE TWO PROMPTS YOU'LL SEE
+--------------------------------------------------------------------------------
+- "Todo List would like to access files in your Documents folder."
+  Click Allow (or OK). Your tasks are saved there. If you say no, the app shows
+  a banner and saves nothing until you allow it.
+
+- A notification that a login item was added. That's this app, so the
+  shortcut below works as soon as you log in. To turn it off, choose
+  Todo List > Open at Login from the menu bar.
+
+
+4. USING IT
+--------------------------------------------------------------------------------
+Control-Option-Space (⌃⌥Space) shows the window from any app. Press it
+again to hide it.
+
+Closing the window doesn't quit the app, so the shortcut keeps working. Use
+Cmd-Q to quit. Clicking the Dock icon also brings the window back.
+
+The tabs at the top:
+  Short Term   Readings, Assignments, Emails, and Other, on one screen
+  Long Term    one plain list
+  Due          every task that has a due date, soonest first
+
+The basics:
+  - Type in a section's field and press Return to add a task.
+  - Click the box to finish a task.
+  - Hover over a task for the star, the calendar (due date), the pie
+    (part done, in quarters), and the x (delete).
+  - Double-click a task to rename it.
+  - Cmd-Z undoes anything, including a delete.
+  - Cmd-1 to Cmd-4 jump to a section's field, and Cmd-L to the long-term one.
+
+The full list of features and shortcuts is in the README:
+https://github.com/ruben-hayrapetyan/ToDo
+
+
+5. YOUR DATA
+--------------------------------------------------------------------------------
+Everything is in one file, saved the moment you change anything:
+
+    Documents/Todo List/todos.json
+
+To move your tasks to another Mac, copy that file. A copy from the start of
+each day is kept in Documents/Todo List/saves.
+
+
+6. IF SOMETHING'S WRONG
+--------------------------------------------------------------------------------
+"Control-Option-Space is already in use", or the shortcut does nothing:
+  Another app has that shortcut. Click the Dock icon to open the window
+  instead.
+
+The shortcut switches your keyboard language:
+  macOS uses the same keys for "Select next source in Input menu". Turn that
+  off in System Settings > Keyboard > Keyboard Shortcuts > Input Sources.
+
+A banner says the task file can't be opened:
+  Go to System Settings > Privacy & Security > Files and Folders, switch on
+  Documents Folder under Todo List, then quit and reopen the app.
+
+
+7. UPDATING AND REMOVING
+--------------------------------------------------------------------------------
+Update: quit with Cmd-Q and replace the app in Applications with the new one.
+Your tasks stay put.
+
+Remove: turn off Todo List > Open at Login, quit with Cmd-Q, and drag the app
+to the Trash. Your tasks stay in Documents/Todo List until you delete that
+folder.

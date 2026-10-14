@@ -10,6 +10,14 @@ with the Command Line Tools.
 
 <p align="center"><sub>Preview rendered from the app's own colors, type, and layout rules (<code>Sources/DesignSystem.swift</code>) — sample data, not a real task list.</sub></p>
 
+## Download
+
+Get the zip from the [latest release](https://github.com/ruben-hayrapetyan/ToDo/releases/latest),
+unzip it, and drag **Todo List** into Applications. It runs on macOS 13 or
+later, on Apple silicon and Intel. The app isn't notarized, so macOS blocks
+the first launch. [`QUICKSTART.txt`](QUICKSTART.txt), included in the zip as
+`Quick Start.txt`, explains how to open it anyway.
+
 ## Build
 
 ```bash
@@ -26,6 +34,16 @@ and ad-hoc signs the bundle. To install it, run:
 That quits any running copy, replaces `/Applications/Todo List.app`, and
 launches it. Run the installed copy rather than the one in `build/`. The login
 item remembers where the app is, and `build/` is wiped on every build.
+
+To make a release, run:
+
+```bash
+./build.sh --release
+```
+
+That builds one binary for both Apple silicon and Intel, then zips the app with
+`QUICKSTART.txt` into `build/Todo-List-<version>.zip`. The version is `VERSION`
+in `build.sh`.
 
 ## Test
 
@@ -176,7 +194,8 @@ window explains any problem:
 | `Sources/TodoListApp.swift` | App entry point, window, menus, open at login       |
 | `Tests/main.swift`          | Store and file-format tests, run by `test.sh`       |
 | `tools/MakeIcon.swift`      | Draws the icon into an `.iconset` at build time     |
-| `build.sh`                  | Compiles, assembles, signs, and optionally installs |
+| `build.sh`                  | Compiles, assembles, signs; installs or zips a release |
+| `QUICKSTART.txt`            | First-run guide, shipped in the release zip         |
 | `test.sh`                   | Builds and runs the tests                           |
 
 ## The design
