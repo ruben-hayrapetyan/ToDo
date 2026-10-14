@@ -46,6 +46,16 @@ enum Paper {
     static func accent(for horizon: Horizon) -> Color {
         horizon == .shortTerm ? fresh : aged
     }
+
+    /// The due page mixes both horizons, so it takes neither ink; each row
+    /// still keeps its own.
+    static func accent(for page: Page) -> Color {
+        switch page {
+        case .shortTerm: return fresh
+        case .longTerm:  return aged
+        case .due:       return ink
+        }
+    }
 }
 
 /// Three faces, each with one job.
@@ -70,6 +80,17 @@ extension Bucket {
         case .assignments: return "ASGN"
         case .emails:      return "MAIL"
         case .other:       return "MISC"
+        }
+    }
+}
+
+extension Place {
+    /// The section code, or LONG for a long-term task — four letters either
+    /// way, so the due page's mixed list keeps the same column.
+    var code: String {
+        switch self {
+        case .shortTerm(let bucket): return bucket.code
+        case .longTerm:              return "LONG"
         }
     }
 }

@@ -29,15 +29,15 @@ final class WindowState: ObservableObject {
 
     /// Mirrors ContentView's @AppStorage, read directly so key handling does not
     /// need a view.
-    var horizon: Horizon {
-        Horizon(rawValue: UserDefaults.standard.string(forKey: "selectedHorizon") ?? "") ?? .shortTerm
+    var page: Page {
+        Page(rawValue: UserDefaults.standard.string(forKey: "selectedHorizon") ?? "") ?? .shortTerm
     }
 
     /// What an action on this task's row should cover: the whole selection
     /// when the task is part of a larger one, otherwise just the task.
     func targets(for todo: Todo, in store: TodoStore) -> [Todo] {
         guard selection.contains(todo.id), selection.count > 1 else { return [todo] }
-        return selection.chosen(from: store.visibleItems(in: todo.horizon, filter: filter))
+        return selection.chosen(from: store.visibleItems(in: page, filter: filter))
     }
 
     // MARK: - Keyboard
@@ -60,7 +60,7 @@ final class WindowState: ObservableObject {
 
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         let key = event.charactersIgnoringModifiers?.lowercased()
-        let visible = store.visibleItems(in: horizon, filter: filter)
+        let visible = store.visibleItems(in: page, filter: filter)
         let order = visible.map(\.id)
 
         if modifiers == .command {
@@ -92,7 +92,7 @@ final class WindowState: ObservableObject {
                   let i = visible.firstIndex(where: { $0.id == first.id }) else { return false }
             store.delete(chosen)
             // Land on the neighbour so several can be deleted in a row.
-            let rest = store.visibleItems(in: horizon, filter: filter)
+            let rest = store.visibleItems(in: page, filter: filter)
             if rest.isEmpty { selection.clear() } else { selection.select(rest[min(i, rest.count - 1)].id) }
         case 53:    // escape
             guard !selection.isEmpty else { return false }

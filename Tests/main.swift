@@ -148,6 +148,33 @@ test("visible items walk sections top to bottom") { dir in
     check(store.visibleItems(in: .longTerm, filter: .all).map(\.title) == ["later"], "long term")
 }
 
+test("due page lists dated tasks from both horizons, soonest first") { dir in
+    let store = TodoStore(storeURL: dir.appendingPathComponent("todos.json"))
+    let now = Date()
+    store.add("undated", to: .readings)
+    store.add("friday", to: .emails)
+    store.addLongTerm("next month")
+    store.add("overdue", to: .assignments)
+    store.add("finished early", to: .other)
+    func task(_ title: String) -> Todo { store.todos.first { $0.title == title }! }
+    store.setDue(task("friday"), to: now.addingTimeInterval(3 * 86_400))
+    store.setDue(task("next month"), to: now.addingTimeInterval(30 * 86_400))
+    store.setDue(task("overdue"), to: now.addingTimeInterval(-3600))
+    store.setDue(task("finished early"), to: now.addingTimeInterval(-7200))
+    store.toggle(task("finished early"))
+
+    let titles = store.visibleItems(in: .due, filter: .all).map(\.title)
+    check(titles == ["overdue", "friday", "next month", "finished early"], "soonest first, done last (got \(titles))")
+    check(store.visibleItems(in: .due, filter: .active).map(\.title) == ["overdue", "friday", "next month"], "filter applies")
+    check(store.totalCount(in: .due) == 4 && store.doneCount(in: .due) == 1, "counts cover dated tasks only")
+
+    store.clearCompleted(in: .due)
+    check(store.todos.count == 4 && store.todos.allSatisfy { !$0.isDone }, "clear completed on the due page")
+    store.setDue(task("undated"), to: now.addingTimeInterval(60))
+    let after = store.dueItems(filter: .all).map(\.title)
+    check(after == ["overdue", "undated", "friday", "next month"], "dating a task puts it in order (got \(after))")
+}
+
 // MARK: - Undo
 
 test("undo and redo across edits") { dir in

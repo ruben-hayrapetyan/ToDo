@@ -17,7 +17,7 @@ final class TodoStore: ObservableObject {
     @Published private(set) var problem: String?
 
     struct UnstarUndo: Equatable {
-        let horizon: Horizon
+        let page: Page
         let ids: Set<UUID>
     }
 
@@ -142,20 +142,20 @@ final class TodoStore: ObservableObject {
 
     // MARK: - Derived values
 
-    func remainingCount(in horizon: Horizon) -> Int {
-        todos.filter { $0.horizon == horizon && !$0.isDone }.count
+    func remainingCount(in page: Page) -> Int {
+        todos.filter { page.contains($0) && !$0.isDone }.count
     }
 
-    func totalCount(in horizon: Horizon) -> Int {
-        todos.filter { $0.horizon == horizon }.count
+    func totalCount(in page: Page) -> Int {
+        todos.filter { page.contains($0) }.count
     }
 
-    func doneCount(in horizon: Horizon) -> Int {
-        todos.filter { $0.horizon == horizon && $0.isDone }.count
+    func doneCount(in page: Page) -> Int {
+        todos.filter { page.contains($0) && $0.isDone }.count
     }
 
-    func starredCount(in horizon: Horizon) -> Int {
-        todos.filter { $0.horizon == horizon && $0.isStarred }.count
+    func starredCount(in page: Page) -> Int {
+        todos.filter { page.contains($0) && $0.isStarred }.count
     }
 
     /// Unfinished tasks left in one short-term section, for its header badge.
@@ -177,12 +177,20 @@ final class TodoStore: ObservableObject {
             .sorted(by: Self.inOrder)
     }
 
-    /// Everything on screen for one view, top to bottom — the order the arrow
+    /// Every task with a due date, from both horizons, soonest first.
+    func dueItems(filter: Filter) -> [Todo] {
+        todos
+            .filter { $0.dueDate != nil && filter.matches($0) }
+            .sorted(by: Self.byDue)
+    }
+
+    /// Everything on screen for one page, top to bottom — the order the arrow
     /// keys walk through.
-    func visibleItems(in horizon: Horizon, filter: Filter) -> [Todo] {
-        switch horizon {
+    func visibleItems(in page: Page, filter: Filter) -> [Todo] {
+        switch page {
         case .shortTerm: return Bucket.allCases.flatMap { items(in: $0, filter: filter) }
         case .longTerm:  return longTermItems(filter: filter)
+        case .due:       return dueItems(filter: filter)
         }
     }
 
@@ -202,6 +210,15 @@ final class TodoStore: ObservableObject {
             if a.createdAt != b.createdAt { return a.createdAt < b.createdAt }
             return a.id.uuidString < b.id.uuidString
         }
+    }
+
+    /// Soonest due first, with finished tasks moved to the bottom like
+    /// everywhere else. Tasks due at the same moment fall back to `inOrder`.
+    static func byDue(_ a: Todo, _ b: Todo) -> Bool {
+        if a.isDone != b.isDone { return !a.isDone }
+        let due = (a.dueDate ?? .distantFuture, b.dueDate ?? .distantFuture)
+        if due.0 != due.1 { return due.0 < due.1 }
+        return inOrder(a, b)
     }
 
     // MARK: - Mutations
@@ -296,18 +313,18 @@ final class TodoStore: ObservableObject {
         group.count > 1 ? "\(action) for \(group.count) Tasks" : action
     }
 
-    /// Takes the star off every task in one horizon, remembering which ones so
-    /// `restoreStars` can undo it. Scoped like clearCompleted: the view you are
-    /// not looking at is never touched.
-    func unstarAll(in horizon: Horizon) {
-        let ids = Set(todos.filter { $0.horizon == horizon && $0.isStarred }.map(\.id))
+    /// Takes the star off every task on one page, remembering which ones so
+    /// `restoreStars` can undo it. Scoped like clearCompleted: tasks that are
+    /// not on screen are never touched.
+    func unstarAll(in page: Page) {
+        let ids = Set(todos.filter { page.contains($0) && $0.isStarred }.map(\.id))
         guard !ids.isEmpty else { return }
         change("Unstar All") { list in
             for i in list.indices where ids.contains(list[i].id) {
                 list[i].isStarred = false
             }
         }
-        unstarUndo = UnstarUndo(horizon: horizon, ids: ids)
+        unstarUndo = UnstarUndo(page: page, ids: ids)
     }
 
     /// Puts back exactly the stars the last `unstarAll` removed. Tasks deleted
@@ -322,9 +339,9 @@ final class TodoStore: ObservableObject {
         unstarUndo = nil
     }
 
-    /// Scoped to the horizon on screen, so clearing one view never touches the other.
-    func clearCompleted(in horizon: Horizon) {
-        change("Clear Completed") { list in list.removeAll { $0.horizon == horizon && $0.isDone } }
+    /// Scoped to the page on screen, so clearing one view never touches the other.
+    func clearCompleted(in page: Page) {
+        change("Clear Completed") { list in list.removeAll { page.contains($0) && $0.isDone } }
     }
 
     func dismissProblem() {

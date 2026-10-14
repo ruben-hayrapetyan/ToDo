@@ -15,6 +15,42 @@ enum Horizon: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// What the window shows: one horizon, or every dated task from both in the
+/// order they fall due. The raw values of the first two match `Horizon`, so the
+/// saved tab from before the due page existed still reads back.
+enum Page: String, CaseIterable, Identifiable {
+    case shortTerm
+    case longTerm
+    case due
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .shortTerm: return "Short Term"
+        case .longTerm:  return "Long Term"
+        case .due:       return "Due"
+        }
+    }
+
+    /// "every short-term task", "every dated task".
+    var adjective: String {
+        switch self {
+        case .shortTerm: return "short-term"
+        case .longTerm:  return "long-term"
+        case .due:       return "dated"
+        }
+    }
+
+    func contains(_ todo: Todo) -> Bool {
+        switch self {
+        case .shortTerm: return todo.horizon == .shortTerm
+        case .longTerm:  return todo.horizon == .longTerm
+        case .due:       return todo.dueDate != nil
+        }
+    }
+}
+
 /// The sections of the short-term view, in display order.
 enum Bucket: String, Codable, CaseIterable, Identifiable {
     case readings

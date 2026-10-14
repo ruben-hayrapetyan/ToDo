@@ -50,10 +50,16 @@ again if it is already in front. For that to work the app has to be running, so:
   shortcut. If pressing it does nothing, or does something else, another app
   holds it, so pick a different one.
 
-A **Short Term / Long Term** toggle sits at the top of the window. Short term is
+A **Short Term / Long Term / Due** toggle sits at the top of the window. Short term is
 the sectioned view — **Readings**, **Assignments**, **Emails**, and **Other**,
 stacked on one screen. Long term is a single flat list with no sections. Each has its own add field, so a task goes straight into
 the section you typed it in.
+
+**Due** shows only tasks with a due date, from both short and long term, in the
+order they fall due: overdue first, then soonest to latest. Each row starts
+with where the task lives (`READ` `ASGN` `MAIL` `MISC`, or `LONG`) and keeps its
+own ink. Finished tasks still drop to the bottom. There is no add field here: a
+task appears as soon as you give it a date, and leaves if you remove it.
 
 - Type in a section's field and press **Return** to add a task there. Focus
   stays put, so you can add several in a row.
@@ -98,12 +104,13 @@ the section you typed it in.
   any selected row. In an add field, **Esc** leaves the field so these keys reach the
   list.
 - **Unstar all** in the footer takes the star off every task in the view you are
-  on. It then turns into **Restore stars**, which puts back exactly the ones it
+  on (on **Due**, every dated task). It then turns into **Restore stars**, which puts back exactly the ones it
   removed - so a mis-click costs nothing. Starring anything by hand, or
   relaunching, retires the undo and the control reads "Unstar all" again.
 - **All / Active / Starred / Done** filters whatever is on screen.
-  **Clear Completed** removes finished tasks from the horizon you are viewing
-  only, so clearing short term never touches long term.
+  **Clear Completed** removes finished tasks from the view you are on only, so
+  clearing short term never touches long term, and clearing **Due** removes
+  only finished tasks that had a date.
 - Every change is written to disk the moment you make it, so quitting never
   loses anything.
 
@@ -159,10 +166,10 @@ window explains any problem:
 
 | Path                        | What it is                                          |
 | --------------------------- | --------------------------------------------------- |
-| `Sources/Todo.swift`        | `Todo`, the `Horizon` split, `Bucket`, `Filter`     |
+| `Sources/Todo.swift`        | `Todo`, the `Horizon` split, `Page`, `Bucket`, `Filter` |
 | `Sources/TodoStore.swift`   | Task list + load/save, the single source of truth   |
 | `Sources/DesignSystem.swift`| The palette and the three type roles                |
-| `Sources/ContentView.swift` | Window chrome, sections, the long-term list, rows   |
+| `Sources/ContentView.swift` | Window chrome, sections, the long-term and due lists, rows |
 | `Sources/WindowState.swift` | Filter, selection, rename state; list keyboard keys |
 | `Sources/Selection.swift`   | Click, ⌘-click and ⇧-range selection rules          |
 | `Sources/GlobalHotKey.swift`| The system-wide ⌃⌥Space shortcut                       |

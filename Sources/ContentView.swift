@@ -8,17 +8,17 @@ struct ContentView: View {
 
     /// Stored rather than plain @State so the app reopens on whichever tab you
     /// were last using — otherwise long-term tasks look missing after a restart.
-    @AppStorage("selectedHorizon") private var horizonRaw = Horizon.shortTerm.rawValue
+    @AppStorage("selectedHorizon") private var pageRaw = Page.shortTerm.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
 
-    private var horizon: Horizon {
-        get { Horizon(rawValue: horizonRaw) ?? .shortTerm }
-        nonmutating set { horizonRaw = newValue.rawValue }
+    private var page: Page {
+        get { Page(rawValue: pageRaw) ?? .shortTerm }
+        nonmutating set { pageRaw = newValue.rawValue }
     }
 
-    private var accent: Color { Paper.accent(for: horizon) }
+    private var accent: Color { Paper.accent(for: page) }
     private var filter: Filter { window.filter }
 
     var body: some View {
@@ -33,7 +33,7 @@ struct ContentView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    TaskList(horizon: horizon, filter: filter)
+                    TaskList(page: page, filter: filter)
                 }
                 // Keep the arrow-key selection on screen.
                 .onChange(of: window.selection.cursor) { id in
@@ -56,8 +56,8 @@ struct ContentView: View {
         // itself claims focus once it appears.
         .onChange(of: window.target) { target in
             switch target {
-            case .bucket:   horizon = .shortTerm
-            case .longTerm: horizon = .longTerm
+            case .bucket:   page = .shortTerm
+            case .longTerm: page = .longTerm
             case nil:       break
             }
         }
@@ -77,7 +77,7 @@ struct ContentView: View {
                     .foregroundStyle(Paper.muted)
             }
 
-            horizonTabs
+            pageTabs
             filterRow
         }
         .padding(.horizontal, 18)
@@ -87,33 +87,35 @@ struct ContentView: View {
     }
 
     private var standing: String {
-        if store.totalCount(in: horizon) == 0 { return "nothing here" }
-        let open = store.remainingCount(in: horizon)
+        if store.totalCount(in: page) == 0 { return "nothing here" }
+        let open = store.remainingCount(in: page)
         return open == 0 ? "all clear" : "\(open) open"
     }
 
-    /// The two inks. Switching them is the app's one mode change, so it gets the
-    /// only underline in the interface.
-    private var horizonTabs: some View {
+    /// The two inks, and the due page that mixes them. Switching is the app's
+    /// one mode change, so it gets the only underline in the interface.
+    private var pageTabs: some View {
         HStack(spacing: 20) {
-            ForEach(Horizon.allCases) { candidate in
+            ForEach(Page.allCases) { candidate in
                 Button {
-                    withAnimation(motion(.easeInOut(duration: 0.18))) { horizon = candidate }
+                    withAnimation(motion(.easeInOut(duration: 0.18))) { page = candidate }
                 } label: {
                     Text(candidate.title.lowercased())
                         .font(Face.code(11))
                         .tracking(1.5)
-                        .foregroundStyle(candidate == horizon ? Paper.ink : Paper.muted)
+                        .foregroundStyle(candidate == page ? Paper.ink : Paper.muted)
                         .padding(.bottom, 6)
                         .overlay(alignment: .bottom) {
                             Rectangle()
-                                .fill(candidate == horizon
+                                .fill(candidate == page
                                       ? Paper.accent(for: candidate) : .clear)
                                 .frame(height: 2)
                         }
                 }
                 .buttonStyle(.plain)
-                .help("Show \(candidate.title.lowercased()) tasks")
+                .help(candidate == .due
+                      ? "Show every task with a due date, soonest first"
+                      : "Show \(candidate.title.lowercased()) tasks")
             }
             Spacer()
         }
@@ -173,23 +175,23 @@ struct ContentView: View {
 
     /// The task tally, or with several selected, how many and what to press.
     private var footerCount: String {
-        let selected = window.selection.chosen(from: store.visibleItems(in: horizon, filter: filter)).count
+        let selected = window.selection.chosen(from: store.visibleItems(in: page, filter: filter)).count
         if selected > 1 { return "\(selected) selected · d sets a due date" }
-        return "\(store.totalCount(in: horizon)) tasks · \(store.doneCount(in: horizon)) done"
+        return "\(store.totalCount(in: page)) tasks · \(store.doneCount(in: page)) done"
     }
 
     /// One control with two faces: it takes the star off everything in this
     /// view, then offers to put back exactly what it removed.
     private var starToggle: some View {
-        let restoring = store.unstarUndo?.horizon == horizon
+        let restoring = store.unstarUndo?.page == page
         let count = restoring
             ? (store.unstarUndo?.ids.count ?? 0)
-            : store.starredCount(in: horizon)
+            : store.starredCount(in: page)
         let enabled = count > 0
 
         return Button {
             withAnimation(motion(.easeInOut(duration: 0.2))) {
-                if restoring { store.restoreStars() } else { store.unstarAll(in: horizon) }
+                if restoring { store.restoreStars() } else { store.unstarAll(in: page) }
             }
         } label: {
             Text(restoring ? "Restore stars" : "Unstar all")
@@ -200,22 +202,22 @@ struct ContentView: View {
         .disabled(!enabled)
         .help(restoring
               ? "Put back the \(count) star\(count == 1 ? "" : "s") just removed"
-              : "Take the star off every \(horizon.title.lowercased()) task")
+              : "Take the star off every \(page.adjective) task")
     }
 
     private var clearCompletedButton: some View {
         Button {
             withAnimation(motion(.easeInOut(duration: 0.2))) {
-                store.clearCompleted(in: horizon)
+                store.clearCompleted(in: page)
             }
         } label: {
             Text("Clear completed")
                 .font(Face.code(10, weight: .semibold))
-                .foregroundStyle(store.doneCount(in: horizon) == 0 ? Paper.faint : accent)
+                .foregroundStyle(store.doneCount(in: page) == 0 ? Paper.faint : accent)
         }
         .buttonStyle(.plain)
-        .disabled(store.doneCount(in: horizon) == 0)
-        .help("Removes finished \(horizon.title.lowercased()) tasks only")
+        .disabled(store.doneCount(in: page) == 0)
+        .help("Removes finished \(page.adjective) tasks only")
     }
 
     private func motion(_ animation: Animation) -> Animation? {
@@ -228,19 +230,22 @@ struct ContentView: View {
 /// Everything between the header and the footer. Split out from ContentView so
 /// it can be rendered on its own, without a scroll view, for design review.
 struct TaskList: View {
-    let horizon: Horizon
+    let page: Page
     let filter: Filter
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            if horizon == .shortTerm {
+            switch page {
+            case .shortTerm:
                 ForEach(Array(Bucket.allCases.enumerated()), id: \.element) { index, bucket in
                     BucketSection(bucket: bucket,
                                   shortcutNumber: index + 1,
                                   filter: filter)
                 }
-            } else {
+            case .longTerm:
                 LongTermList(filter: filter)
+            case .due:
+                DueList(filter: filter)
             }
         }
         .padding(.horizontal, 18)
@@ -504,6 +509,32 @@ struct LongTermList: View {
     }
 }
 
+// MARK: - Everything with a due date
+
+/// Dated tasks from both horizons in one list, soonest first. There is no add
+/// field: a task gets here by being given a date wherever it lives.
+struct DueList: View {
+    let filter: Filter
+
+    @EnvironmentObject private var store: TodoStore
+
+    private var items: [Todo] { store.dueItems(filter: filter) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if items.isEmpty {
+                NothingYet(text: filter == .all
+                           ? "nothing has a due date · d on a task sets one"
+                           : "nothing \(filter.rawValue.lowercased()) here")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(items) { TaskRow(todo: $0, showsPlace: true) }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Due date entry
 
 /// The popover for typing a due date: "3pm", "tomorrow 5pm", "fri 9am", "in 2
@@ -627,6 +658,9 @@ struct QuarterPie: View {
 
 struct TaskRow: View {
     let todo: Todo
+    /// Prints the task's section code before its title, for a list that mixes
+    /// sections and horizons.
+    var showsPlace = false
 
     @EnvironmentObject private var store: TodoStore
     @EnvironmentObject private var window: WindowState
@@ -662,6 +696,13 @@ struct TaskRow: View {
                 .frame(width: 24, alignment: .leading)
 
             HStack(spacing: 8) {
+                if showsPlace {
+                    Text(todo.place.code)
+                        .font(Face.code(9.5, weight: .medium))
+                        .tracking(1.2)
+                        .foregroundStyle(Paper.faint)
+                }
+
                 if isEditing {
                     TextField("", text: $draft)
                         .textFieldStyle(.plain)
@@ -907,7 +948,7 @@ struct TaskRow: View {
         if flags.contains(.command) {
             window.selection.toggle(todo.id)
         } else if flags.contains(.shift) {
-            let order = store.visibleItems(in: todo.horizon, filter: window.filter).map(\.id)
+            let order = store.visibleItems(in: window.page, filter: window.filter).map(\.id)
             window.selection.extend(to: todo.id, in: order)
         } else {
             window.selection.select(todo.id)
