@@ -31,10 +31,9 @@ final class GlobalHotKey {
         let id = EventHotKeyID(signature: OSType(0x5444_4F4C), id: 1)   // 'TDOL'
         let registered = RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), id,
                                              GetApplicationEventTarget(), 0, &hotKeyRef)
-        guard registered == noErr else {
-            RemoveEventHandler(handlerRef)
-            return nil
-        }
+        // deinit still runs when this init fails, and it removes the handler,
+        // so removing it here as well would free it twice.
+        guard registered == noErr else { return nil }
     }
 
     deinit {
