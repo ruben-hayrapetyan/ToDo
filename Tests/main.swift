@@ -257,6 +257,44 @@ test("due state: date, countdown, then overdue counting up from 0") { _ in
     check(late(3 * 604_800 + 4 * 86_400 + 5 * 3600 + 59) == "+3w 4d 5h", "later weeks")
 }
 
+test("due labels wake only when their text changes") { _ in
+    let due = Date(timeIntervalSince1970: 1_000_000)
+    // Seconds from the deadline to the next redraw, starting `offset` from it.
+    func next(_ offset: TimeInterval) -> TimeInterval {
+        DueState.nextChange(due: due, after: due.addingTimeInterval(offset))
+            .timeIntervalSince(due)
+    }
+    check(next(-30 * 86_400) == -86_399, "a date sleeps until the countdown")
+    check(next(-86_400) == -86_399, "and wakes as it starts")
+    check(next(-3661) == -3660, "the countdown ticks each second")
+    check(next(-3660.5) == -3660, "on whole seconds from the deadline")
+    check(next(-0.2) == 0, "the last second flips to overdue")
+    check(next(0) == 1, "overdue counts seconds")
+    check(next(86_399.5) == 86_400, "until a day has passed")
+    check(next(86_400) == 86_460, "then minutes")
+    check(next(604_799) == 604_800, "until a week")
+    check(next(604_800) == 608_400, "then hours")
+
+    // Walking two days out to nine days late: the text changes at every step
+    // and holds still halfway to the next one.
+    var now = due.addingTimeInterval(-2 * 86_400)
+    var steps = 0
+    let failuresBefore = failures
+    while now < due.addingTimeInterval(9 * 86_400) && failures == failuresBefore {
+        let after = DueState.nextChange(due: due, after: now)
+        let text = DueState(due: due, now: now).text
+        check(after > now, "the schedule moves forward")
+        check(DueState(due: due, now: after).text != text, "text changes at \(after)")
+        let mid = now.addingTimeInterval(after.timeIntervalSince(now) / 2)
+        check(DueState(due: due, now: mid).text == text, "and not before \(after)")
+        now = after
+        steps += 1
+    }
+    // The date, each countdown second, each second of the first late day,
+    // each minute to a week, each hour after.
+    check(steps == 1 + 86_399 + 86_400 + 8640 + 48, "one step per change, got \(steps)")
+}
+
 test("typed due dates") { _ in
     let cal = Calendar.current
     let now = Date()

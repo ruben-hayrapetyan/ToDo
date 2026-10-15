@@ -616,6 +616,17 @@ struct DuePicker: View {
     }
 }
 
+/// Wakes a due label only when its text changes. A once-a-second timer on
+/// every dated row kept the whole list redrawing all day, even for the
+/// dates that wouldn't change for weeks.
+struct DueSchedule: TimelineSchedule {
+    let due: Date
+
+    func entries(from startDate: Date, mode: Mode) -> UnfoldFirstSequence<Date> {
+        sequence(first: startDate) { DueState.nextChange(due: due, after: $0) }
+    }
+}
+
 // MARK: - Progress
 
 /// How a quarter count reads in menus and help.
@@ -885,7 +896,7 @@ struct TaskRow: View {
                         .foregroundStyle(Paper.faint)
                         .fixedSize()
                 } else {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                    TimelineView(DueSchedule(due: due)) { context in
                         let state = DueState(due: due, now: context.date)
                         Text(state.text)
                             .font(Face.code(10, weight: .medium))

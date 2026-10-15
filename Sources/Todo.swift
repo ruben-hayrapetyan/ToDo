@@ -238,6 +238,30 @@ enum DueState: Equatable {
             return "+" + Self.elapsed(elapsed)
         }
     }
+
+    /// The next moment after `now` when the text reads differently, so a row
+    /// redraws when its label changes rather than every second. A date waits
+    /// until it turns into a countdown; the countdown and the first overdue day
+    /// change every second, then every minute, and past a week every hour.
+    /// Every step lands a whole number of seconds from the deadline, so rows
+    /// due on whole seconds all redraw in the same pass.
+    static func nextChange(due: Date, after now: Date) -> Date {
+        let remaining = due.timeIntervalSince(now)
+        let before: TimeInterval   // seconds before the deadline; negative once past
+        if remaining >= day {
+            before = day - 1
+        } else if remaining > 0 {
+            // clock() rounds up, so the text changes as each whole second is reached.
+            before = remaining.rounded(.up) - 1
+        } else {
+            let elapsed = -remaining
+            let step: TimeInterval = elapsed < day ? 1 : elapsed < 7 * day ? 60 : 3600
+            before = -((elapsed / step).rounded(.down) + 1) * step
+        }
+        let next = due.addingTimeInterval(-before)
+        // Floating-point rounding must never leave the schedule standing still.
+        return next > now ? next : now.addingTimeInterval(1)
+    }
 }
 
 /// Which tasks the window is currently showing.
