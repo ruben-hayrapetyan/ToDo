@@ -23,7 +23,15 @@ final class TodoStore: ObservableObject {
 
     /// Set by the window so every change lands on Edit ▸ Undo. Optional because
     /// tests and the design renderer run without one.
-    var undoManager: UndoManager?
+    ///
+    /// Each step keeps a copy of the whole list, and the app runs for days at a
+    /// time as a login item, so the history is capped. The cap covers the
+    /// window's text fields too, which share this manager.
+    var undoManager: UndoManager? {
+        didSet { undoManager?.levelsOfUndo = Self.undoLevels }
+    }
+
+    static let undoLevels = 100
 
     private let fileURL: URL
 
@@ -34,6 +42,10 @@ final class TodoStore: ObservableObject {
     /// Whether `problem` came from a failed save, so the next good save can
     /// clear it without hiding a load problem.
     private var problemIsSaveFailure = false
+
+    /// The problem a failed save took the banner from. Losing edits is the more
+    /// urgent news, but the earlier one comes back once it is dealt with.
+    private var coveredProblem: String?
 
     /// Where tasks live: ~/Documents/Todo List/todos.json.
     ///
@@ -114,30 +126,37 @@ final class TodoStore: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.calendar = Calendar(identifier: .gregorian)
+        // A fixed format needs the POSIX locale, or some locales write the
+        // digits in another script.
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         return formatter
     }()
 
     /// Writes today's snapshot the first time the app launches that day and
-    /// removes whatever snapshot was left from a previous day, so the saves
-    /// folder only ever holds today's copy.
+    /// removes the snapshots left from earlier days, so the saves folder only
+    /// ever holds today's copy.
     private func snapshotForToday() {
-        let todayName = Self.snapshotDateFormatter.string(from: Date()) + ".json"
-        let todayURL = savesDirectoryURL.appendingPathComponent(todayName)
-        guard !FileManager.default.fileExists(atPath: todayURL.path) else { return }
+        // A list that didn't load cleanly is not the person's tasks. Replacing
+        // the last good snapshot with it would throw away the one copy that
+        // could bring them back.
+        guard problem == nil, !writesBlocked else { return }
 
         let fm = FileManager.default
-        try? fm.createDirectory(at: savesDirectoryURL, withIntermediateDirectories: true)
-        if let previous = try? fm.contentsOfDirectory(at: savesDirectoryURL, includingPropertiesForKeys: nil) {
-            for file in previous {
-                try? fm.removeItem(at: file)
-            }
-        }
+        let todayName = Self.snapshotDateFormatter.string(from: Date()) + ".json"
+        let todayURL = savesDirectoryURL.appendingPathComponent(todayName)
+        guard !fm.fileExists(atPath: todayURL.path) else { return }
 
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted]
-        guard let data = try? encoder.encode(todos) else { return }
-        try? data.write(to: todayURL, options: .atomic)
+        try? fm.createDirectory(at: savesDirectoryURL, withIntermediateDirectories: true)
+        // Write first, so a failed write never leaves the folder with no snapshot.
+        guard let data = try? Self.encode(todos),
+              (try? data.write(to: todayURL, options: .atomic)) != nil else { return }
+
+        // Then drop earlier days' snapshots, and nothing else that is in there.
+        let files = (try? fm.contentsOfDirectory(at: savesDirectoryURL, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.lastPathComponent != todayName
+            && file.lastPathComponent.range(of: #"^\d{4}-\d{2}-\d{2}\.json$"#, options: .regularExpression) != nil {
+            try? fm.removeItem(at: file)
+        }
     }
 
     // MARK: - Derived values
@@ -344,9 +363,11 @@ final class TodoStore: ObservableObject {
         change("Clear Completed") { list in list.removeAll { page.contains($0) && $0.isDone } }
     }
 
+    /// Closing a save failure brings back whatever it covered.
     func dismissProblem() {
-        problem = nil
+        problem = problemIsSaveFailure ? coveredProblem : nil
         problemIsSaveFailure = false
+        coveredProblem = nil
     }
 
     private func update(_ todo: Todo, _ actionName: String, _ edit: (inout Todo) -> Void) {
@@ -394,16 +415,17 @@ final class TodoStore: ObservableObject {
     }
 
     private func load() {
-        let fm = FileManager.default
-        // No file yet is the normal first launch, not an error.
-        guard fm.fileExists(atPath: fileURL.path) else { return }
-
         let data: Data
         do {
             data = try Data(contentsOf: fileURL)
+        } catch CocoaError.fileReadNoSuchFile {
+            // No file yet is the normal first launch, not an error.
+            return
         } catch {
-            // Most often macOS denied access to Documents. The tasks are still
-            // there, so saving an empty list over them is the one thing not to do.
+            // Most often macOS denied access to Documents. That also makes the
+            // file look missing to an existence check, which is why this reads
+            // it rather than asking first. The tasks are still there, so saving
+            // an empty list over them is the one thing not to do.
             writesBlocked = true
             problem = "Couldn't open \(fileURL.path) (\(error.localizedDescription)). "
                 + "Nothing will be saved until this is fixed, so the file is left untouched. "
@@ -461,21 +483,26 @@ final class TodoStore: ObservableObject {
         }
     }
 
-    private func save() {
-        guard !writesBlocked else { return }
+    /// The file format: pretty-printed JSON with ISO 8601 dates, shared by the
+    /// task file and the daily snapshots.
+    private static func encode(_ todos: [Todo]) throws -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted]
+        return try encoder.encode(todos)
+    }
+
+    private func save() {
+        guard !writesBlocked else { return }
         do {
-            let data = try encoder.encode(todos)
+            let data = try Self.encode(todos)
             try data.write(to: fileURL, options: .atomic)
             if problemIsSaveFailure { dismissProblem() }
         } catch {
-            if problem == nil || problemIsSaveFailure {
-                problem = "Couldn't save your tasks (\(error.localizedDescription)). "
-                    + "Recent changes are only in memory and will be lost when the app quits."
-                problemIsSaveFailure = true
-            }
+            if !problemIsSaveFailure { coveredProblem = problem }
+            problem = "Couldn't save your tasks (\(error.localizedDescription)). "
+                + "Recent changes are only in memory and will be lost when the app quits."
+            problemIsSaveFailure = true
         }
     }
 }

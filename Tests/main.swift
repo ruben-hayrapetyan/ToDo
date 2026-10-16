@@ -105,6 +105,32 @@ test("a failed save is reported, and cleared by the next good one") { dir in
     check(contents(of: url)?.contains("Lost?") == true, "earlier change reaches disk too")
 }
 
+test("a failed save takes over the banner, and gives it back once saving works") { dir in
+    let folder = dir.appendingPathComponent("locked", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let url = folder.appendingPathComponent("todos.json")
+    try write("""
+    [
+      {"id":"D03C6939-CC09-44B1-8B16-B456A167BDA1","title":"Good","bucket":"readings"},
+      {"id":"not-a-uuid","title":"Bad"}
+    ]
+    """, to: url)
+    let store = TodoStore(storeURL: url)
+    let loadProblem = store.problem
+    check(loadProblem?.contains("1 task") == true, "load problem shown")
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+    store.add("Lost?", to: .other)
+    check(store.problem?.contains("Couldn't save") == true, "save failure shown over it")
+    store.dismissProblem()
+    check(store.problem == loadProblem, "closing it brings the load problem back")
+    store.add("Still lost?", to: .other)
+    check(store.problem?.contains("Couldn't save") == true, "a later failure shows again")
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+    store.add("Saved", to: .other)
+    check(store.problem == loadProblem, "a good save brings it back too")
+    check(contents(of: url)?.contains("Lost?") == true, "and the earlier changes reach disk")
+}
+
 // MARK: - Format
 
 test("old files load with defaults; long-term tasks drop the placeholder bucket") { dir in
@@ -176,6 +202,22 @@ test("due page lists dated tasks from both horizons, soonest first") { dir in
 }
 
 // MARK: - Undo
+
+test("undo keeps the last \(TodoStore.undoLevels) changes") { dir in
+    let store = TodoStore(storeURL: dir.appendingPathComponent("todos.json"))
+    let undo = UndoManager()
+    undo.groupsByEvent = false
+    store.undoManager = undo
+    for i in 0...TodoStore.undoLevels {
+        undo.beginUndoGrouping()
+        store.add("Task \(i)", to: .other)
+        undo.endUndoGrouping()
+    }
+    var undone = 0
+    while undo.canUndo { undo.undo(); undone += 1 }
+    check(undone == TodoStore.undoLevels && store.todos.map(\.title) == ["Task 0"],
+          "the oldest change drops off (undid \(undone))")
+}
 
 test("undo and redo across edits") { dir in
     let store = TodoStore(storeURL: dir.appendingPathComponent("todos.json"))
@@ -322,6 +364,39 @@ test("typed due dates") { _ in
     if let r = parts("friday") {
         check(r.c.weekday == 6 && r.c.hour == 23 && r.c.minute == 59, "day alone → end of that day")
     } else { check(false, "friday parses") }
+
+    // Only a bare time rolls over to tomorrow; a typed-out date means that day.
+    let monthDay = DateFormatter()
+    monthDay.locale = Locale(identifier: "en_US_POSIX")
+    monthDay.dateFormat = "MMM d"
+    if let r = parts(monthDay.string(from: now).lowercased() + " 12:00am") {
+        check(cal.isDate(r.date, inSameDayAs: now), "today's date with a past time stays today")
+    } else { check(false, "a typed-out date with a time parses") }
+
+    if let r = parts("tomorrow morning") {
+        check(cal.isDate(r.date, inSameDayAs: tomorrow) && r.c.hour! < 12, "a time of day is kept")
+    } else { check(false, "tomorrow morning parses") }
+
+    // A day that has already gone means the next one, unless the text says so.
+    let lastWeek = cal.date(byAdding: .day, value: -7, to: now)!
+    let weekdayAndDay = DateFormatter()
+    weekdayAndDay.locale = Locale(identifier: "en_US_POSIX")
+    weekdayAndDay.dateFormat = "EEE d"
+    for text in [monthDay, weekdayAndDay].map({ $0.string(from: lastWeek).lowercased() }) {
+        if let r = parts(text) {
+            check(r.date > now, "'\(text)' is not in the past (got \(r.date))")
+        } else { check(false, "'\(text)' parses") }
+    }
+    if let r = parts(monthDay.string(from: lastWeek).lowercased()) {
+        let gone = cal.dateComponents([.month, .day], from: lastWeek)
+        check(r.c.month == gone.month && r.c.day == gone.day
+              && r.date < cal.date(byAdding: .year, value: 1, to: now)!, "a gone date is the next one")
+    }
+    check(parts("10/14/2025")?.c.year == 2025, "a typed year is kept")
+    if let r = parts("yesterday") {
+        check(cal.isDate(r.date, inSameDayAs: cal.date(byAdding: .day, value: -1, to: now)!),
+              "yesterday is taken at its word")
+    } else { check(false, "yesterday parses") }
 
     // These are computed from the `now` passed in, so a fixed one works.
     var nyCal = Calendar(identifier: .gregorian)

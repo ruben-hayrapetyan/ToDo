@@ -10,8 +10,13 @@ set -euo pipefail
 
 INSTALL=false
 RELEASE=false
-[[ "${1:-}" == "--install" ]] && INSTALL=true
-[[ "${1:-}" == "--release" ]] && RELEASE=true
+for arg in "$@"; do
+  case "$arg" in
+    --install) INSTALL=true ;;
+    --release) RELEASE=true ;;
+    *) echo "usage: $0 [--install] [--release]" >&2; exit 2 ;;
+  esac
+done
 
 cd "$(dirname "$0")"
 

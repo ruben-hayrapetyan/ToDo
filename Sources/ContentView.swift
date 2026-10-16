@@ -8,7 +8,7 @@ struct ContentView: View {
 
     /// Stored rather than plain @State so the app reopens on whichever tab you
     /// were last using — otherwise long-term tasks look missing after a restart.
-    @AppStorage("selectedHorizon") private var pageRaw = Page.shortTerm.rawValue
+    @AppStorage(WindowState.pageKey) private var pageRaw = Page.shortTerm.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openWindow) private var openWindow
@@ -762,6 +762,10 @@ struct TaskRow: View {
         .background(isSelected ? accent.opacity(0.12) : isHovering ? Paper.hover : Color.clear)
         .onHover { isHovering = $0 }
         .onAppear { if isEditing { openEdit() } }
+        // Switching page or closing the window removes the row without the
+        // field ever losing focus, so save here too rather than dropping the
+        // text and leaving `editingID` to reopen the field later.
+        .onDisappear { if hasOpenEdit { commitEdit() } }
         .onChange(of: window.editingID) { id in
             if id == todo.id {
                 openEdit()

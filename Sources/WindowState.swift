@@ -27,18 +27,30 @@ final class WindowState: ObservableObject {
     /// `openWindow` by the first view, since the app delegate has no other way in.
     var reopenWindow: (() -> Void)?
 
+    /// The defaults key for the page on screen, shared with ContentView's
+    /// @AppStorage so the two can never drift apart.
+    static let pageKey = "selectedHorizon"
+
     /// Mirrors ContentView's @AppStorage, read directly so key handling does not
     /// need a view.
     var page: Page {
-        Page(rawValue: UserDefaults.standard.string(forKey: "selectedHorizon") ?? "") ?? .shortTerm
+        Page(rawValue: UserDefaults.standard.string(forKey: Self.pageKey) ?? "") ?? .shortTerm
     }
 
     /// What an action on this task's row should cover: the whole selection
     /// when the task is part of a larger one, otherwise just the task.
+    ///
+    /// The same tasks as the visible list, but unsorted: callers only count
+    /// them or act on them, and every selected row asks several times a redraw.
     func targets(for todo: Todo, in store: TodoStore) -> [Todo] {
         guard selection.contains(todo.id), selection.count > 1 else { return [todo] }
-        return selection.chosen(from: store.visibleItems(in: page, filter: filter))
+        let page = self.page, filter = self.filter, selection = self.selection
+        return store.todos.filter { selection.contains($0.id) && page.contains($0) && filter.matches($0) }
     }
+
+    /// The digit row by physical key, for layouts such as AZERTY where those
+    /// keys type symbols unless Shift is held.
+    private static let digitRow = [29: 0, 18: 1, 19: 2, 20: 3]
 
     // MARK: - Keyboard
 
@@ -55,7 +67,10 @@ final class WindowState: ObservableObject {
     ///
     /// Everything but rename acts on the whole selection.
     func handleKey(_ event: NSEvent, store: TodoStore) -> Bool {
-        guard let window = event.window, window.isKeyWindow,
+        // Only the task window itself: an alert, the About panel, or a popover
+        // can't become main, and keys meant for them must not act on the list.
+        guard let window = event.window, window.isKeyWindow, window.canBecomeMain,
+              NSApp.modalWindow == nil,
               !(window.firstResponder is NSText) else { return false }
 
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
@@ -104,10 +119,11 @@ final class WindowState: ObservableObject {
                 store.setStarred(chosen, !current.isStarred)
             case "d":
                 dueRequest = current.id
-            case let digit? where digit.count == 1 && Int(digit).map(Todo.quarters.contains) == true:
-                store.setProgress(chosen, to: Int(digit)!)
             default:
-                return false
+                let digit = key.flatMap { $0.count == 1 ? Int($0) : nil }
+                    ?? Self.digitRow[Int(event.keyCode)]
+                guard let quarters = digit, Todo.quarters.contains(quarters) else { return false }
+                store.setProgress(chosen, to: quarters)
             }
         }
         return true

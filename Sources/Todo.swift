@@ -289,6 +289,10 @@ enum DueParser {
     private static let detector = try? NSDataDetector(
         types: NSTextCheckingResult.CheckingType.date.rawValue)
 
+    /// A day or month name, written out or cut short: "fri", "friday", "sept".
+    private static let weekdays = #"\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b"#
+    private static let months = #"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b"#
+
     static func parse(_ raw: String, now: Date = Date(), calendar: Calendar = .current) -> Date? {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !text.isEmpty else { return nil }
@@ -312,15 +316,39 @@ enum DueParser {
               var date = match.date else { return nil }
 
         // "friday" alone comes back as noon. A day with no time means the day itself, so
-        // it is due at the end of it.
-        let hasTime = text.range(of: #"\d\s*(a|p)m?\b|\d:\d\d|noon|midnight|\bat\s+\d"#,
+        // it is due at the end of it. "Tomorrow morning" does name a time, and keeps it.
+        let hasTime = text.range(of: #"\d\s*(a|p)m?\b|\d:\d\d|noon|midnight|\bat\s+\d|\b(morning|afternoon|evening)\b"#,
                                  options: .regularExpression) != nil
         if !hasTime { date = at(23, 59, addingDays: calendar.dateComponents(
             [.day], from: calendar.startOfDay(for: now),
             to: calendar.startOfDay(for: date)).day ?? 0) ?? date }
 
-        // A bare time that has already gone today means tomorrow.
-        if date <= now, calendar.isDate(date, inSameDayAs: now), !text.contains("today") {
+        func mentions(_ pattern: String) -> Bool {
+            text.range(of: pattern, options: .regularExpression) != nil
+        }
+
+        // A day that has already gone means the next one, as in other task apps:
+        // "oct 1" typed on the 16th is next October, and "fri 9" read as last
+        // Friday the 9th is the coming Friday — after today, like "fri" alone.
+        // A typed year, "yesterday", "last" or "ago" are taken at their word.
+        let today = calendar.startOfDay(for: now)
+        if calendar.startOfDay(for: date) < today,
+           !mentions(#"\b(yesterday|last|ago)\b|\b\d{4}\b|\d/\d+/\d"#) {
+            let byWeek = mentions(weekdays) && !mentions(months + #"|\d/\d"#)
+            var steps = 0
+            while calendar.startOfDay(for: date) <= today, steps < 60,
+                  let next = byWeek ? calendar.date(byAdding: .day, value: 7, to: date)
+                                    : calendar.date(byAdding: .year, value: 1, to: date) {
+                date = next
+                steps += 1
+            }
+        }
+
+        // A bare time that has already gone today means tomorrow. Text that names
+        // the day — "today", "this evening", "oct 15 9am", "10/15" — means that day.
+        let namesDay = mentions(#"\b(today|tonight|this|tomorrow|yesterday)\b|\d/\d|\d{4}-\d|"#
+                                + weekdays + "|" + months)
+        if date <= now, calendar.isDate(date, inSameDayAs: now), !namesDay {
             date = calendar.date(byAdding: .day, value: 1, to: date) ?? date
         }
         return date

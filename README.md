@@ -113,7 +113,8 @@ task appears as soon as you give it a date, and leaves if you remove it.
   Renaming to an empty string deletes the task.
 - Hover and click the **×** to delete; right-click for the same actions in a
   context menu.
-- **⌘Z** undoes anything: a delete, a rename, a tick, Clear Completed.
+- **⌘Z** undoes anything: a delete, a rename, a tick, Clear Completed. It goes
+  back 100 changes.
   **⇧⌘Z** redoes.
 - **Click a task** to select it, then use the keyboard: **↑ / ↓** move, **Space**
   ticks it, **1–3 / 0** set progress, **D** sets a due date, **Return** renames,
